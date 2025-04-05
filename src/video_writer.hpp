@@ -25,7 +25,7 @@ namespace nvr
               dst_dir_(dst_dir),
               active_(true),
               power_down_(false),
-              writing_(false),
+              writing_(false)
         {
         }
         video_writer() = delete;

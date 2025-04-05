@@ -19,7 +19,6 @@ app_sources = [
     'src/v4l2_src.cpp',
     'src/element.cpp',
     'src/gpio.cpp',
-    'src/motion_sensor.cpp',
     'src/led_manager.cpp',
     'src/sd_manager.cpp',
     'src/reset_monitor.cpp',
