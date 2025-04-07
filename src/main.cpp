@@ -12,6 +12,7 @@
 #include <sys/signalfd.h>
 #include <netinet/in.h>
 #include <net/if.h>
+#include <iostream>
 #include "config.hpp"
 #include "pipeline.hpp"
 #include "video_writer.hpp"
@@ -712,6 +713,7 @@ END:
 
 int main(int argc, char **argv)
 {
+    std::cout << "aaaaaa" << std:: endl;
     std::shared_ptr<nvr::pipeline> pipeline;
     std::shared_ptr<nvr::video_writer> video_writer;
 
@@ -721,14 +723,14 @@ int main(int argc, char **argv)
     std::shared_ptr<nvr::gpio_out> pwd_decoder = std::make_shared<nvr::gpio_out>("169", "P6_1");
 
     std::shared_ptr<nvr::gpio_out> led_board_green = std::make_shared<nvr::gpio_out>("193", "P9_1");
-    std::shared_ptr<nvr::gpio_out> led_board_red = std::make_shared<nvr::gpio_out>("186", "P10_0");
+    std::shared_ptr<nvr::gpio_out> led_board_red = std::make_shared<nvr::gpio_out>("200", "P10_0");
     std::shared_ptr<nvr::gpio_out> led_board_yel = std::make_shared<nvr::gpio_out>("192", "P9_0");
 
     std::shared_ptr<nvr::gpio_in> check_bat = std::make_shared<nvr::gpio_in>("201", "P10_1");
     std::shared_ptr<nvr::gpio_in> pgood = std::make_shared<nvr::gpio_in>("208", "P11_0");
 
     std::shared_ptr<nvr::gpio_out> alarm_out_a = std::make_shared<nvr::gpio_out>("216", "P12_0");
-    std::shared_ptr<nvr::gpio_out> alarm_out_b = std::make_shared<nvr::gpio_out>("117", "P12_1");
+    std::shared_ptr<nvr::gpio_out> alarm_out_b = std::make_shared<nvr::gpio_out>("217", "P12_1");
 
     std::shared_ptr<nvr::power_monitor> power_monitor = std::make_shared<nvr::power_monitor>("224", "P13_0");
 
@@ -754,6 +756,8 @@ int main(int argc, char **argv)
     write_pid_file();
 
     pipeline = std::make_shared<nvr::pipeline>();
+
+    SPDLOG_ERROR("testtttttt");
 
     if (mount(nullptr, "/", nullptr, MS_REMOUNT, nullptr)) {
         SPDLOG_ERROR("Failed to remount /.");
