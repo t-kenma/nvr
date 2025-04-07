@@ -64,7 +64,19 @@ struct callback_data_t {
     nvr::led_manager *led_manager;
     nvr::sd_manager *sd_manager;
     nvr::reset_monitor *reset_monitor;
-   
+    
+    
+    nvr::gpio_out *rst_decoder;
+    nvr::gpio_out *pwd_decoder;
+    nvr::gpio_out *alarm_out_a;
+    nvr::gpio_out *alarm_out_b;
+    nvr::gpio_out *led_board_green;
+    nvr::gpio_out *led_board_red;
+    nvr::gpio_out *led_board_yel;
+    
+    nvr::gpio_in *check_bat;
+    nvr::gpio_in *pgood;
+
     std::filesystem::path done_dir;
     const char *jpeg_file;
 
@@ -1005,3 +1017,4 @@ END:
     }
     std::exit(0);
 }
+
