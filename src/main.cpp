@@ -750,14 +750,14 @@ int main(int argc, char **argv)
     bool use_sensor = false;
 
     spdlog::set_level(spdlog::level::info);
-
+    
     gst_init(&argc, &argv);
 
     write_pid_file();
 
     pipeline = std::make_shared<nvr::pipeline>();
 
-    SPDLOG_ERROR("testtttttt");
+    SPDLOG_INFO("test_1");
 
     if (mount(nullptr, "/", nullptr, MS_REMOUNT, nullptr)) {
         SPDLOG_ERROR("Failed to remount /.");
@@ -779,7 +779,7 @@ int main(int argc, char **argv)
         exit(-1);
     }
 
-
+    SPDLOG_INFO("test_2");
     std::shared_ptr<nvr::led_manager> led_manager = std::make_shared<nvr::led_manager>(led_board_green, led_board_red, alarm_out_a, alarm_out_b);
 
     {
@@ -858,7 +858,7 @@ int main(int argc, char **argv)
 #ifdef NVR_DEBUG_POWER
     video_writer->tmp_out2_ = tmp_out2;
 #endif
-
+	SPDLOG_INFO("test_1");
     reset_monitor->set_led_manager(led_manager);
     reset_monitor->set_logger(logger);
     if (reset_monitor->open()) {
@@ -917,6 +917,8 @@ int main(int argc, char **argv)
 
     std::thread power_monitor_thread;
     std::thread video_writer_thread;
+
+	SPDLOG_INFO("test_4");
 
     power_monitor_thread = std::thread(power_monitor_process, &data);
     if (wait_power_pin(power_monitor, &data)) {
