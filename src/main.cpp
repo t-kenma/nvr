@@ -748,7 +748,7 @@ int main(int argc, char **argv)
         exit(-1);
     }
 	
-	for(int i = 0;i < 1000000;i++):
+	for(int i = 0;i < 1000000;i++);
 	
     if (rst_decoder->open(true)) {
         SPDLOG_ERROR("Failed to open rst_decoder.");
