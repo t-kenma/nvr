@@ -327,6 +327,7 @@ static gboolean bus_watch_cb(GstBus * /* bus */, GstMessage *message, gpointer u
             if (!data->pipeline->stop()) {
                 g_main_loop_quit(data->main_loop);
             }
+            SPDLOG_INFO("test_7");
             if (!data->pipeline->start()) {
                 g_main_loop_quit(data->main_loop);
             }
@@ -342,6 +343,7 @@ static gboolean bus_watch_cb(GstBus * /* bus */, GstMessage *message, gpointer u
             if (!data->pipeline->stop()) {
                 g_main_loop_quit(data->main_loop);
             }
+            SPDLOG_INFO("test_8");
             if (!data->pipeline->start()) {
                 g_main_loop_quit(data->main_loop);
             }
@@ -741,16 +743,18 @@ int main(int argc, char **argv)
 
     std::shared_ptr<nvr::logger> logger = std::make_shared<nvr::logger>("/etc/nvr/video-recorder.log");
 
-
-	 if (rst_decoder->open(true)) {
-        SPDLOG_ERROR("Failed to open rst_decoder.");
-        exit(-1);
-    }
-    
-     if (pwd_decoder->open(true)) {
+	if (pwd_decoder->open(true)) {
         SPDLOG_ERROR("Failed to open pwd_decoder.");
         exit(-1);
     }
+	
+	for(int i = 0;i < 1000000;i++):
+	
+    if (rst_decoder->open(true)) {
+        SPDLOG_ERROR("Failed to open rst_decoder.");
+        exit(-1);
+    }
+   
 
 #ifdef NVR_DEBUG_POWER
     std::shared_ptr<nvr::gpio_out> tmp_out1 = std::make_shared<nvr::gpio_out>("232", "P14_0");
@@ -933,7 +937,7 @@ int main(int argc, char **argv)
     }
 
 
-
+	SPDLOG_INFO("test_5");
     SPDLOG_DEBUG("Start video writer.");
     video_writer_thread = std::thread(video_writer->process());
 
@@ -942,6 +946,7 @@ int main(int argc, char **argv)
             led_manager->set_status(nvr::led_manager::state_recording);
         }
         SPDLOG_DEBUG("Start pipeline.");
+        SPDLOG_INFO("test_6");
         if (pipeline->start()) {
             data.main_loop = g_main_loop_new(nullptr, FALSE);
             SPDLOG_INFO("Start main loop.");
