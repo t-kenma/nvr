@@ -740,8 +740,16 @@ int main(int argc, char **argv)
 
     std::shared_ptr<nvr::logger> logger = std::make_shared<nvr::logger>("/etc/nvr/video-recorder.log");
 
-    rst_decoder->write_value(true);
-    pwd_decoder->write_value(true);
+
+	 if (rst_decoder->open(true)) {
+        SPDLOG_ERROR("Failed to open rst_decoder.");
+        exit(-1);
+    }
+    
+     if (pwd_decoder->open(true)) {
+        SPDLOG_ERROR("Failed to open pwd_decoder.");
+        exit(-1);
+    }
 
 #ifdef NVR_DEBUG_POWER
     std::shared_ptr<nvr::gpio_out> tmp_out1 = std::make_shared<nvr::gpio_out>("232", "P14_0");
@@ -817,15 +825,6 @@ int main(int argc, char **argv)
         exit(-1);
     }
 
-    if (rst_decoder->open(true)) {
-        SPDLOG_ERROR("Failed to open rst_decoder.");
-        exit(-1);
-    }
-
-    if (pwd_decoder->open(true)) {
-        SPDLOG_ERROR("Failed to open rst_decoder.");
-        exit(-1);
-    }
 
 #ifdef NVR_DEBUG_POWER
     if (tmp_out1->open()) {
