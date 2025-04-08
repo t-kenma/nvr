@@ -716,6 +716,7 @@ int main(int argc, char **argv)
     std::cout << "aaaaaa" << std:: endl;
     std::shared_ptr<nvr::pipeline> pipeline;
     std::shared_ptr<nvr::video_writer> video_writer;
+    spdlog::set_level(spdlog::level::debug);
 
     callback_data_t data{};
     
@@ -757,8 +758,7 @@ int main(int argc, char **argv)
 #endif
     bool use_sensor = false;
 
-    spdlog::set_level(spdlog::level::info);
-    
+   
     gst_init(&argc, &argv);
 
     write_pid_file();
