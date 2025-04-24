@@ -56,13 +56,21 @@ namespace nvr {
         inline bool is_root_file_exists() noexcept
         {
             std::error_code ec;
+            SPDLOG_INFO("root_file_ = {}",root_file_.c_str());
             return std::filesystem::exists(root_file_, ec);
         }
 
         inline bool is_device_file_exists() noexcept
         {
             std::error_code ec;
+            SPDLOG_INFO("device_file_ = {}",device_file_.c_str());
             return std::filesystem::exists(device_file_, ec);
+        }
+
+        inline bool is_update_file_exists() noexcept
+        {
+            std::error_code ec;
+            return std::filesystem::exists(update_file_, ec);
         }
 
         inline void set_mount_status(int status)
@@ -80,6 +88,8 @@ namespace nvr {
         const std::filesystem::path device_file_;
         const std::filesystem::path mount_point_;
         const std::filesystem::path root_file_;
+        const std::filesystem::path update_file_;
+        
         std::thread thread_;
         std::shared_ptr<led_manager> led_manager_;
         std::atomic<int>  format_result_;

@@ -200,6 +200,15 @@ namespace nvr {
             if (check_proc_mounts() && is_root_file_exists()) {
                 set_mount_status(mount_state_mounted);
                 led_manager_->clear_status(led_manager::state_sd_all);
+                //ここでアップデートファイルチェック
+
+                //SPDLOG_DEBUG("is_update_file_exists = {}",is_update_file_exists());
+                /*
+                if (is_update_file_exists()) {
+
+                }
+                */
+
             } else if (is_device_file_exists()) {
                 set_mount_status(mount_state_mounting);
                 start_format();

@@ -769,8 +769,6 @@ int main(int argc, char **argv)
 
     pipeline = std::make_shared<nvr::pipeline>();
 
-    SPDLOG_INFO("test_1");
-
     if (mount(nullptr, "/", nullptr, MS_REMOUNT, nullptr)) {
         SPDLOG_ERROR("Failed to remount /.");
         exit(-1);
