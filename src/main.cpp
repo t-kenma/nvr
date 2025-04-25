@@ -715,7 +715,6 @@ END:
 
 int main(int argc, char **argv)
 {
-    std::cout << "aaaaaa" << std:: endl;
     std::shared_ptr<nvr::pipeline> pipeline;
     std::shared_ptr<nvr::video_writer> video_writer;
     spdlog::set_level(spdlog::level::debug);
@@ -843,6 +842,8 @@ int main(int argc, char **argv)
         "/dev/mmcblk1p1",
         "/mnt/sd",
         "/mnt/sd/.nrs_video_data",
+        "/mnt/sd/nvr",
+        "/usr/bin/",
         led_manager,
         logger
     );
@@ -1025,4 +1026,5 @@ END:
     }
     std::exit(0);
 }
+
 

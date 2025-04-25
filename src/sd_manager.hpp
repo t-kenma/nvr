@@ -22,11 +22,15 @@ namespace nvr {
             const char *device_file,
             const char *mount_point,
             const char *root_file,
+            const char *update_file,
+            const char *nvr_file,
             std::shared_ptr<led_manager> led_manager,
             std::shared_ptr<logger> logger
         ) noexcept : device_file_(device_file),
               mount_point_(mount_point),
               root_file_(root_file),
+              update_file_(update_file),
+              nvr_file_(nvr_file),
               led_manager_(led_manager),
               logger_(logger),
               format_result_(0),
@@ -84,12 +88,14 @@ namespace nvr {
         }
 
         int create_root_file();
+        bool copy_file(const std::filesystem::path &src, const std::filesystem::path &dst);
+
 
         const std::filesystem::path device_file_;
         const std::filesystem::path mount_point_;
         const std::filesystem::path root_file_;
         const std::filesystem::path update_file_;
-        
+        const std::filesystem::path nvr_file_;
         std::thread thread_;
         std::shared_ptr<led_manager> led_manager_;
         std::atomic<int>  format_result_;

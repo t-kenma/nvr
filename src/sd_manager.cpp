@@ -19,6 +19,8 @@ namespace nvr {
     const int sd_manager::format_result_success = 1;
     const int sd_manager::format_result_error = 2;
 
+    static const size_t BUFSIZE = 10240;
+
     int sd_manager::start_format()
     {
         SPDLOG_DEBUG("start_format");
@@ -175,6 +177,9 @@ namespace nvr {
 
     void sd_manager::timer_process()
     {
+        static const std::filesystem::path proc_mounts{"/proc/mounts"};
+        static const char *new_udt_file = update_file_.c_str();
+        static const char *old_udt_file = nvr_file_.c_str();
         int status = get_mount_status();
         int counter = counter_;
 
@@ -202,12 +207,19 @@ namespace nvr {
                 led_manager_->clear_status(led_manager::state_sd_all);
                 //ここでアップデートファイルチェック
 
-                //SPDLOG_DEBUG("is_update_file_exists = {}",is_update_file_exists());
-                /*
-                if (is_update_file_exists()) {
-
+                SPDLOG_DEBUG("is_update_file_exists = {}",is_update_file_exists());
+                if (!is_update_file_exists()) {
+                    SPDLOG_DEBUG("no update faile");
                 }
-                */
+
+                if(copy_file(new_udt_file,old_udt_file))
+                {
+                    SPDLOG_DEBUG("{} is copied to {}", new_udt_file.c_str(), old_udt_file.c_str());
+                }
+                else
+                {
+                    SPDLOG_DEBUG("{} is copy false to {}", new_udt_file.c_str(), old_udt_file.c_str());
+                } 
 
             } else if (is_device_file_exists()) {
                 set_mount_status(mount_state_mounting);
@@ -320,4 +332,75 @@ namespace nvr {
 
     //     return rc;
     // }
+
+    bool sd_manager::copy_file(const std::filesystem::path &src, const std::filesystem::path &dst)
+    {
+        bool ret = false;
+
+        int rfd = -1;
+        int wfd = -1;
+        unsigned char buf[BUFSIZE];
+
+        rfd = open(src.c_str(), O_RDONLY|O_CLOEXEC);
+        if (rfd < 0)
+        {
+            SPDLOG_ERROR("Failed to open {}: {}", src.c_str(), strerror(errno));
+            goto END;
+        }
+
+        wfd = open(dst.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, S_IRWXU);
+        if (wfd < 0)
+        {
+            SPDLOG_ERROR("Failed to open {}: {}", dst.c_str(), strerror(errno));
+            goto END;
+        }
+
+        while (true)
+        {
+            ssize_t rsize = read(rfd, buf, BUFSIZE);
+            ssize_t wsize = 0;
+            if (rsize == 0)
+            {
+                ret = true;
+                break;
+            }
+            if (rsize < 0)
+            {
+                SPDLOG_ERROR("Failed to read {}: {}", src.c_str(), strerror(errno));
+                break;
+            }
+
+            wsize = write(wfd, (const void *)buf, rsize);
+            if (wsize == -1)
+            {
+                SPDLOG_ERROR("Failed to write {}: {}", dst.c_str(), strerror(errno));
+                break;
+            }
+
+            if (fdatasync(wfd))
+            {
+                SPDLOG_WARN("Failed to sync {}: {}", dst.c_str(), strerror(errno));
+            }
+        }
+
+    END:
+        if (rfd != -1)
+        {
+            close(rfd);
+        }
+
+        if (wfd != -1)
+        {
+                   close(wfd);
+
+            // if (ret)
+            // {
+            //     if (sync_dir(dst.parent_path())) {
+            //         ret = false;
+            //     }
+            // }
+        }
+
+        return ret;
+    }
 }
