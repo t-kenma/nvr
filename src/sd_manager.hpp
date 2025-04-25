@@ -17,6 +17,9 @@ namespace nvr {
         static const int format_result_none;
         static const int format_result_success;
         static const int format_result_error;
+        static const int update_result_none;
+        static const int update_result_success;
+        static const int update_result_error;
 
         explicit sd_manager(
             const char *device_file,
@@ -51,8 +54,12 @@ namespace nvr {
         // int sync_dir(const std::filesystem::path& path);
     private:
         int start_format();
+        int start_update();
         bool wait_format();
+        bool wait_update();
         void format_process();
+        void update_process();
+
         int mount_sd();
         int unmount_sd();
 
@@ -97,6 +104,7 @@ namespace nvr {
         std::thread thread_;
         std::shared_ptr<led_manager> led_manager_;
         std::atomic<int>  format_result_;
+        std::atomic<int>  update_result_;
         std::atomic<int> mount_status_;
         std::shared_ptr<logger> logger_;
         int counter_;
@@ -104,3 +112,4 @@ namespace nvr {
 }
 
 #endif
+

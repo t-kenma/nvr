@@ -8,6 +8,7 @@
 #include <sstream>
 #include "sd_manager.hpp"
 #include "logging.hpp"
+#include "util.hpp"
 
 namespace nvr {
     const char *MKFS_PATH = "/sbin/mkfs.vfat";
@@ -18,6 +19,10 @@ namespace nvr {
     const int sd_manager::format_result_none = 0;
     const int sd_manager::format_result_success = 1;
     const int sd_manager::format_result_error = 2;
+    const int sd_manager::update_result_none = 0;
+    const int sd_manager::update_result_success = 1;
+    const int sd_manager::update_result_error = 2;
+
 
     static const size_t BUFSIZE = 10240;
 
@@ -212,7 +217,11 @@ namespace nvr {
                 if (!is_update_file_exists()) {
                     SPDLOG_INFO("no update faile");
                 }
+                else{
+                    start_update();
+                }
 
+                /*
                 if(copy_file(new_udt_file,old_udt_file))
                 {
                		SPDLOG_INFO("copy ok");
@@ -223,6 +232,7 @@ namespace nvr {
              		SPDLOG_INFO("copy ng");	
                     SPDLOG_DEBUG("{} is copy false to {}", new_udt_file.c_str(), old_udt_file.c_str());
                 } 
+                */
 
             } else if (is_device_file_exists()) {
             	SPDLOG_INFO("mount_state_mounting");
@@ -246,7 +256,12 @@ namespace nvr {
 		            if (!is_update_file_exists()) {
 		                SPDLOG_INFO("no update faile");
 		            }
+                    else{
+                        start_update();
+                    }
+    
 
+                    /*
 		            if(copy_file(new_udt_file,old_udt_file))
 		            {
 		           		SPDLOG_INFO("copy ok");
@@ -257,6 +272,7 @@ namespace nvr {
 		         		SPDLOG_INFO("copy ng");	
 		                SPDLOG_DEBUG("{} is copy false to {}", new_udt_file.c_str(), old_udt_file.c_str());
 		            }
+                    */
                     return;
                 }
                 SPDLOG_INFO("Set mount_status_t to not_mounted");
@@ -423,5 +439,57 @@ namespace nvr {
 
         return ret;
     }
+
+    int sd_manager::start_update()
+    {
+        SPDLOG_INFO("start_update");
+        if (thread_.joinable()) {
+            SPDLOG_WARN("update thread is running");
+            return 0;
+        }
+
+        update_result_.store(update_result_none);
+        thread_ = std::thread([this]{ this->update_process(); });
+
+        return 0;
+    }
+
+    void sd_manager::update_process()
+    {
+        pid_t pid;
+        int status = 0;
+        int rc = 0;
+        static const char *new_udt_file = update_file_.c_str();
+        static const char *old_udt_file = nvr_file_.c_str();
+        std::stringstream tid;
+
+        tid << std::this_thread::get_id();
+        setsid();
+        
+        rc = nvr::do_systemctl("stop", "nvr");
+        if(rc == 0){
+            if(copy_file(new_udt_file,old_udt_file))
+            {
+                SPDLOG_INFO("copy ok");
+                SPDLOG_DEBUG("{} is copied to {}", new_udt_file.c_str(), old_udt_file.c_str());
+            }
+            else
+            {
+                SPDLOG_INFO("copy ng");	
+                SPDLOG_DEBUG("{} is copy false to {}", new_udt_file.c_str(), old_udt_file.c_str());
+            }
+        }
+
+        rc = nvr::do_systemctl("start", "nvr");
+        if(rc == 0){
+            SPDLOG_INFO("start nvr");	
+        }
+        else{
+            SPDLOG_INFO("start nvr NG");	
+        }
+
+        sync();
+    }
 }
+
 
