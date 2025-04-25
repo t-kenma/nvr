@@ -201,27 +201,31 @@ namespace nvr {
 
         if (status == mount_state_not_mounted) {
             // SPDLOG_DEBUG("timer_process not_mounted");
+            SPDLOG_INFO("state_sd_waiting");
             led_manager_->set_status(led_manager::state_sd_waiting);
             if (check_proc_mounts() && is_root_file_exists()) {
+                SPDLOG_INFO("mount_state_mounted");
                 set_mount_status(mount_state_mounted);
                 led_manager_->clear_status(led_manager::state_sd_all);
                 //ここでアップデートファイルチェック
-
-                SPDLOG_DEBUG("is_update_file_exists = {}",is_update_file_exists());
+                SPDLOG_INFO("is_update_file_exists = {}",is_update_file_exists());
                 if (!is_update_file_exists()) {
-                    SPDLOG_DEBUG("no update faile");
+                    SPDLOG_INFO("no update faile");
                 }
 
                 if(copy_file(new_udt_file,old_udt_file))
                 {
+               		SPDLOG_INFO("copy ok");
                     SPDLOG_DEBUG("{} is copied to {}", new_udt_file.c_str(), old_udt_file.c_str());
                 }
                 else
                 {
+             		SPDLOG_INFO("copy ng");	
                     SPDLOG_DEBUG("{} is copy false to {}", new_udt_file.c_str(), old_udt_file.c_str());
                 } 
 
             } else if (is_device_file_exists()) {
+            	SPDLOG_INFO("mount_state_mounting");
                 set_mount_status(mount_state_mounting);
                 start_format();
             }
@@ -233,13 +237,13 @@ namespace nvr {
             if (wait_format()) {
                 auto result = format_result_.load();
                 if (result == format_result_success) {
-                    SPDLOG_DEBUG("Set mount_status_t to mounted");
+                    SPDLOG_INFO("Set mount_status_t to mounted");
                     set_mount_status(mount_state_mounted);
                     led_manager_->clear_status(led_manager::state_sd_all);
 
                     return;
                 }
-                SPDLOG_DEBUG("Set mount_status_t to not_mounted");
+                SPDLOG_INFO("Set mount_status_t to not_mounted");
             }
             set_mount_status(mount_state_not_mounted);
 
@@ -404,3 +408,4 @@ namespace nvr {
         return ret;
     }
 }
+

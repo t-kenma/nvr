@@ -60,14 +60,12 @@ namespace nvr {
         inline bool is_root_file_exists() noexcept
         {
             std::error_code ec;
-            SPDLOG_INFO("root_file_ = {}",root_file_.c_str());
             return std::filesystem::exists(root_file_, ec);
         }
 
         inline bool is_device_file_exists() noexcept
         {
             std::error_code ec;
-            SPDLOG_INFO("device_file_ = {}",device_file_.c_str());
             return std::filesystem::exists(device_file_, ec);
         }
 
