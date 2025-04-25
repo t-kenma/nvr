@@ -843,7 +843,7 @@ int main(int argc, char **argv)
         "/mnt/sd",
         "/mnt/sd/.nrs_video_data",
         "/mnt/sd/nvr",
-        "/usr/bin/",
+        "/usr/bin/nvr",
         led_manager,
         logger
     );
