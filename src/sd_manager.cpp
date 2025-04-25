@@ -9,10 +9,11 @@
 #include "sd_manager.hpp"
 #include "logging.hpp"
 #include "util.hpp"
+#include <filesystem>
 
 namespace nvr {
     const char *MKFS_PATH = "/sbin/mkfs.vfat";
-
+    namespace fs = std::filesystem;
     const int sd_manager::mount_state_not_mounted = 0;
     const int sd_manager::mount_state_mounting = 1;
     const int sd_manager::mount_state_mounted = 2;
@@ -369,6 +370,7 @@ namespace nvr {
     //     return rc;
     // }
 
+
     bool sd_manager::copy_file(const std::filesystem::path &src, const std::filesystem::path &dst)
     {
         bool ret = false;
@@ -461,6 +463,7 @@ namespace nvr {
         int rc = 0;
         static const char *new_udt_file = update_file_.c_str();
         static const char *old_udt_file = nvr_file_.c_str();
+        static const char *rename_file = nvr_file_.c_str();
         std::stringstream tid;
 
         tid << std::this_thread::get_id();
@@ -468,6 +471,23 @@ namespace nvr {
         
         rc = nvr::do_systemctl("stop", "nvr");
         if(rc == 0){
+            try {
+                fs::rename(old_udt_file, "/usr/bin/nvr");
+            } catch (const fs::filesystem_error& e) {
+                std::cerr << "リネームに失敗: " << e.what() << '\n';
+                goto END;
+            }
+
+
+            SPDLOG_INFO("SDカードから /usr/bin/nvr にコピーしています...\n");	
+            try {
+                fs::copy_file(new_udt_file, old_udt_file, fs::copy_options::overwrite_existing);
+            } catch (const fs::filesystem_error& e) {
+                std::cerr << "コピーに失敗: " << e.what() << '\n';
+            }
+
+
+            /*
             if(copy_file(new_udt_file,old_udt_file))
             {
                 SPDLOG_INFO("copy ok");
@@ -478,8 +498,10 @@ namespace nvr {
                 SPDLOG_INFO("copy ng");	
                 SPDLOG_DEBUG("{} is copy false to {}", new_udt_file.c_str(), old_udt_file.c_str());
             }
+            */
         }
 
+    END:
         rc = nvr::do_systemctl("start", "nvr");
         if(rc == 0){
             SPDLOG_INFO("start nvr");	
