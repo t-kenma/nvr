@@ -75,6 +75,9 @@ int main(int argc, char **argv)
     
     spdlog::set_level(spdlog::level::debug);
     SPDLOG_INFO("main-update");
+	std::cout << "aaaaaa" << std:: endl;
+	printf("bbbbbbbbb");
+
     
     callback_data_t data{};
 
@@ -85,7 +88,8 @@ int main(int argc, char **argv)
     
     data.signal_int_id = g_unix_signal_add(SIGINT, G_SOURCE_FUNC(signal_intr_cb), &data);
     data.signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), &data);
-    
+   
+    /*
  	pid = fork();
     if (pid < 0) {
         SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
@@ -95,6 +99,7 @@ int main(int argc, char **argv)
         SPDLOG_ERROR("Failed to exec nvr.");
         exit(-1);
     }
+    */
     
     while(loop){
     
