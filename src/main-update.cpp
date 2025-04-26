@@ -26,6 +26,7 @@ int main(int argc, char **argv)
     int status;
     
     spdlog::set_level(spdlog::level::debug);
+    SPDLOG_INFO("main-update");
 
     std::shared_ptr<nvr::gpio_out> led_board_green = std::make_shared<nvr::gpio_out>("193", "P9_1");
     std::shared_ptr<nvr::gpio_out> led_board_red = std::make_shared<nvr::gpio_out>("200", "P10_0");
