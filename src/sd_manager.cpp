@@ -479,6 +479,7 @@ namespace nvr {
                 goto END;
             }
         */
+        	sleep(10);
 
             SPDLOG_INFO("SDカードから /usr/bin/nvr にコピーしています...\n");	
             try {
