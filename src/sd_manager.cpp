@@ -471,13 +471,14 @@ namespace nvr {
         
         rc = nvr::do_systemctl("stop", "nvr");
         if(rc == 0){
-            try {
+        /*
+           try {
                 fs::rename(old_udt_file, "/usr/bin/_nvr");
             } catch (const fs::filesystem_error& e) {
                 std::cerr << "リネームに失敗: " << e.what() << '\n';
                 goto END;
             }
-
+        */
 
             SPDLOG_INFO("SDカードから /usr/bin/nvr にコピーしています...\n");	
             try {
@@ -485,6 +486,7 @@ namespace nvr {
             } catch (const fs::filesystem_error& e) {
                 std::cerr << "コピーに失敗: " << e.what() << '\n';
             }
+      
 
 
             /*
