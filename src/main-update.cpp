@@ -119,9 +119,6 @@ int main(int argc, char **argv)
         logger
     );
 
-    data.signal_int_id = g_unix_signal_add(SIGINT, G_SOURCE_FUNC(signal_intr_cb), &data);
-    data.signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), &data);
-
     sleep(3);
     SPDLOG_INFO("sleep end");
 	led_board_green->write_value(true);
@@ -141,6 +138,7 @@ int main(int argc, char **argv)
     }
     
     pid = fork();
+    SPDLOG_INFO("fork");
 	if (pid < 0) {
 		SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
 		return -1;
@@ -149,6 +147,10 @@ int main(int argc, char **argv)
 		SPDLOG_ERROR("Failed to exec nvr.");
 		exit(-1);
 	} 
+	
+	data.signal_int_id = g_unix_signal_add(SIGINT, G_SOURCE_FUNC(signal_intr_cb), &data);
+    data.signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), &data);
+    data.signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), &data);
     
 
     while(loop){

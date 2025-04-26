@@ -213,28 +213,6 @@ namespace nvr {
                 SPDLOG_INFO("mount_state_mounted");
                 set_mount_status(mount_state_mounted);
                 led_manager_->clear_status(led_manager::state_sd_all);
-                //ここでアップデートファイルチェック
-                SPDLOG_INFO("is_update_file_exists = {}",is_update_file_exists());
-                if (!is_update_file_exists()) {
-                    SPDLOG_INFO("no update faile");
-                }
-                else{
-                    start_update();
-                }
-
-                /*
-                if(copy_file(new_udt_file,old_udt_file))
-                {
-               		SPDLOG_INFO("copy ok");
-                    SPDLOG_DEBUG("{} is copied to {}", new_udt_file.c_str(), old_udt_file.c_str());
-                }
-                else
-                {
-             		SPDLOG_INFO("copy ng");	
-                    SPDLOG_DEBUG("{} is copy false to {}", new_udt_file.c_str(), old_udt_file.c_str());
-                } 
-                */
-
             } else if (is_device_file_exists()) {
             	SPDLOG_INFO("mount_state_mounting");
                 set_mount_status(mount_state_mounting);
@@ -251,29 +229,6 @@ namespace nvr {
                     SPDLOG_INFO("Set mount_status_t to mounted");
                     set_mount_status(mount_state_mounted);
                     led_manager_->clear_status(led_manager::state_sd_all);
-                    
-		            //ここでアップデートファイルチェック
-		            SPDLOG_INFO("is_update_file_exists = {}",is_update_file_exists());
-		            if (!is_update_file_exists()) {
-		                SPDLOG_INFO("no update faile");
-		            }
-                    else{
-                        start_update();
-                    }
-    
-
-                    /*
-		            if(copy_file(new_udt_file,old_udt_file))
-		            {
-		           		SPDLOG_INFO("copy ok");
-		                SPDLOG_DEBUG("{} is copied to {}", new_udt_file.c_str(), old_udt_file.c_str());
-		            }
-		            else
-		            {
-		         		SPDLOG_INFO("copy ng");	
-		                SPDLOG_DEBUG("{} is copy false to {}", new_udt_file.c_str(), old_udt_file.c_str());
-		            }
-                    */
                     return;
                 }
                 SPDLOG_INFO("Set mount_status_t to not_mounted");
