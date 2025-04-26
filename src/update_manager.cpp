@@ -34,6 +34,8 @@ namespace nvr {
         int status = get_mount_status();
         static int old_status;
         
+        SPDLOG_INFO("timer_process");
+        
         if (status == mount_state_mounted && old_status != mount_state_mounted ) {
             SPDLOG_INFO("is_update_file_exists = {}",is_update_file_exists());
             if (!is_update_file_exists()) {

@@ -87,8 +87,6 @@ int main(int argc, char **argv)
     spdlog::set_level(spdlog::level::debug);
     SPDLOG_INFO("main-update");
 	std::cout << "aaaaaa" << std:: endl;
-	printf("bbbbbbbbb");
-
     
     callback_data_t data{};
 
@@ -125,25 +123,10 @@ int main(int argc, char **argv)
     data.signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), &data);
 
     sleep(3);
-    
-     led_board_green->write_value(1);
-     led_board_red->write_value(1);
-     led_board_yel->write_value(1);
-
-    if (led_board_green->open(false)) {
-        SPDLOG_ERROR("Failed to open led_board_green.");
-        exit(-1);
-    }
-
-    if (led_board_red->open(false)) {
-        SPDLOG_ERROR("Failed to open led_board_red.");
-        exit(-1);
-    }
-
-    if (led_board_yel->open(false)) {
-        SPDLOG_ERROR("Failed to open led_board_yel.");
-        exit(-1);
-    }
+    SPDLOG_INFO("sleep end");
+	led_board_green->write_value(true);
+	led_board_red->write_value(true);
+	led_board_yel->write_value(true);
     
     data.timer1_id = g_timeout_add_full(
         G_PRIORITY_HIGH,
@@ -156,6 +139,17 @@ int main(int argc, char **argv)
         SPDLOG_ERROR("Failed to add timer1.");
         exit(-1);
     }
+    
+    pid = fork();
+	if (pid < 0) {
+		SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
+		return -1;
+	} else if (pid == 0) {
+		execl("/usr/bin/nvr", "/usr/bin/nvr", "-r", "now", nullptr);
+		SPDLOG_ERROR("Failed to exec nvr.");
+		exit(-1);
+	} 
+    
 
     while(loop){
         int status = update_manager->get_update_status();
