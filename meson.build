@@ -25,6 +25,24 @@ app_sources = [
     'src/logging.cpp',
 ]
 
+update_sources = [
+    'src/main-update.cpp',
+    'src/config.cpp',
+    'src/pipeline.cpp',
+    'src/video_src.cpp',
+    'src/jpeg_sink.cpp',
+    'src/video_sink.cpp',
+    'src/rtsp_src.cpp',
+    'src/video_writer.cpp',
+    'src/v4l2_src.cpp',
+    'src/element.cpp',
+    'src/gpio.cpp',
+    'src/led_manager.cpp',
+    'src/sd_manager.cpp',
+    'src/reset_monitor.cpp',
+    'src/logging.cpp',
+]
+
 if host_machine.system() == 'darwin'
     app_sources += 'src/avf_src.cpp'
 endif
@@ -48,6 +66,13 @@ endif
 exe = executable(
     'nvr',
     app_sources,
+    include_directories: [thirdparty],
+    dependencies : deps
+)
+
+exe = executable(
+    'update',
+    update_sources,
     include_directories: [thirdparty],
     dependencies : deps
 )
