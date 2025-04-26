@@ -123,7 +123,6 @@ int main(int argc, char **argv)
 
     data.signal_int_id = g_unix_signal_add(SIGINT, G_SOURCE_FUNC(signal_intr_cb), &data);
     data.signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), &data);
-<<<<<<< HEAD
 
     sleep(3);
     
@@ -158,26 +157,6 @@ int main(int argc, char **argv)
         exit(-1);
     }
 
-    
-=======
-   
-    /*
->>>>>>> e6d7a8c6f12602ec0182ae7cb19865567b3b7102
- 	pid = fork();
-    if (pid < 0) {
-        SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
-        return -1;
-    } else if (pid == 0) {
-        execl("/usr/bin/nvr", "/usr/bin/nvr", "-r", "now", nullptr);
-        SPDLOG_ERROR("Failed to exec nvr.");
-        exit(-1);
-    }
-<<<<<<< HEAD
-
-=======
-    */
-    
->>>>>>> e6d7a8c6f12602ec0182ae7cb19865567b3b7102
     while(loop){
         int status = update_manager->get_update_status();
         if( status == 1 )
