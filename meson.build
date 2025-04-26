@@ -41,6 +41,7 @@ update_sources = [
     'src/sd_manager.cpp',
     'src/reset_monitor.cpp',
     'src/logging.cpp',
+    'src/update_manager.cpp',
 ]
 
 if host_machine.system() == 'darwin'
