@@ -165,19 +165,19 @@ int main(int argc, char **argv)
         "/mnt/sd",
         "/mnt/sd/.nrs_video_data",
         "/mnt/sd/nvr",
-        "/usr/bin/nvr/nvr",
+        "/usr/bin/app_exe/nvr",
         logger
     );
 
     data.update_manager = update_manager.get();
     
-    if(!fs::exists("usr/bin/nvr/"))
+    if(!fs::exists("usr/bin/app_exe/"))
     {
     	SPDLOG_INFO("create_directory");
 		
 		try 
         {
-	        fs::create_directory("/usr/bin/nvr/ ");
+	        fs::create_directory("/usr/bin/app_exe/ ");
         }
         catch (const fs::filesystem_error& e) 
         {
@@ -187,7 +187,7 @@ int main(int argc, char **argv)
 
 		try 
         {
-			fs::copy_file("/usr/bin/nvr","/usr/bin/nvr/", fs::copy_options::overwrite_existing);
+			fs::copy_file("/usr/bin/nvr","/usr/bin/app_exe/", fs::copy_options::overwrite_existing);
         }
         catch (const fs::filesystem_error& e) 
         {
@@ -230,7 +230,7 @@ int main(int argc, char **argv)
 		SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
 		return -1;
 	} else if (pid == 0) {
-		execl("/usr/bin/nvr/nvr", "/usr/bin/nvr/nvr", "-r", "now", nullptr);
+		execl("/usr/bin/nvr/nvr", "/usr/bin/app_exe/nvr", "-r", "now", nullptr);
 		SPDLOG_ERROR("Failed to exec nvr.");
 		exit(-1);
 	}

@@ -34,8 +34,6 @@ namespace nvr {
         int status = get_mount_status();
         static int old_status;
         
-        SPDLOG_INFO("timer_process");
-        
         if (status == mount_state_mounted && old_status != mount_state_mounted ) {
             SPDLOG_INFO("is_update_file_exists = {}",is_update_file_exists());
             if (!is_update_file_exists()) {
@@ -43,6 +41,7 @@ namespace nvr {
                 update_status_.store(update_none);
             }
             else{
+            	 SPDLOG_INFO("timer_process  update_start");
                 update_status_.store(update_start);
                 //start_update();
             }
@@ -146,7 +145,6 @@ namespace nvr {
     {
         while(1)
         {
-            SPDLOG_INFO("update_proc");
             int status = update_status_.load();
             if( status == 1 )
             {
@@ -168,7 +166,7 @@ namespace nvr {
 	            {
 	                nvr_pid_.store(new_pid);
 	                //set_pid(new_pid);
-	                execl("/usr/bin/nvr/nvr", "/usr/bin/nvr/nvr", "-r", "now", nullptr);
+	                execl("/usr/bin/nvr/nvr", "/usr/bin/app_exe/nvr", "-r", "now", nullptr);
 	                SPDLOG_ERROR("Failed to exec nvr.");
 	                exit(-1);
 	            }      

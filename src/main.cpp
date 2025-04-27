@@ -372,6 +372,9 @@ static gboolean bus_watch_cb(GstBus * /* bus */, GstMessage *message, gpointer u
 
         if (s && gst_structure_has_name(s, "splitmuxsink-fragment-closed"))
         {
+            break;
+
+            /*
             const gchar *location = gst_structure_get_string(s, "location");
 
             if (location)
@@ -388,19 +391,23 @@ static gboolean bus_watch_cb(GstBus * /* bus */, GstMessage *message, gpointer u
                     data->video_writer->notify();
                 }
             }
+            */
         }
         else if (s && gst_structure_has_name(s, "GstMultiFileSink"))
         {
-            const gchar *filename = gst_structure_get_string(s, "filename");
+            //const gchar *filename = gst_structure_get_string(s, "filename");
+            const gchar *location = gst_structure_get_string(s, "location");
 
-            if (filename)
+            if (location)
             {
                 std::time_t jpeg_time;
-                if (std::rename(filename, data->jpeg_file) == -1)
+                std::filesystem::path dst = data->done_dir;
+                dst.append(strrchr(location, '/') + 1);
+                if (std::rename(location, dst.c_str()) == -1)
                 {
-                    SPDLOG_ERROR("Failed to rename {} to {}: {}", filename, data->jpeg_file, std::strerror(errno));
+                    SPDLOG_ERROR("Failed to rename {} to {}: {}", location, data->jpeg_file, std::strerror(errno));
                 } else {
-                    SPDLOG_DEBUG("Rename {} to {}", filename, data->jpeg_file);
+                    SPDLOG_DEBUG("Rename {} to {}", location, data->jpeg_file);
                 }
                 jpeg_time = time(nullptr);
                 data->jpeg_time.store(jpeg_time, std::memory_order_relaxed);
@@ -720,7 +727,7 @@ int main(int argc, char **argv)
     spdlog::set_level(spdlog::level::debug);
 
     callback_data_t data{};
-    SPDLOG_INFO("ver0.0.7");
+    SPDLOG_INFO("ver0.0.8");
     
     std::shared_ptr<nvr::gpio_out> rst_decoder = std::make_shared<nvr::gpio_out>("168", "P6_0");
     std::shared_ptr<nvr::gpio_out> pwd_decoder = std::make_shared<nvr::gpio_out>("169", "P6_1");
@@ -796,7 +803,7 @@ int main(int argc, char **argv)
         const char *config_file = "/etc/nvr/nvr.json";
         const char *factoryset_file = "/etc/nvr/factoryset.json";
         const char *tmp_dir = "/tmp/nvr";
-        const char *jpeg_file = "/tmp/video.jpg";
+        const char *jpeg_file = "/mnt/sd";
 
         auto config = nvr::config(config_file, factoryset_file);
 
@@ -1027,5 +1034,6 @@ END:
     }
     std::exit(0);
 }
+
 
 
