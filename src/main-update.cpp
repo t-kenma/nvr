@@ -213,7 +213,7 @@ bool execute()
     }
 
     pid_t new_pid = fork();
-    if (pid < 0) 
+    if (new_pid < 0) 
     {
         SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
         return false;
