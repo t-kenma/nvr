@@ -136,7 +136,6 @@ int main(int argc, char **argv)
     
     spdlog::set_level(spdlog::level::debug);
     SPDLOG_INFO("main-update");
-	std::cout << "aaaaaa" << std:: endl;
     
     callback_data_t data{};
 
@@ -169,6 +168,8 @@ int main(int argc, char **argv)
         "/usr/bin/nvr/nvr",
         logger
     );
+
+    data.update_manager = update_manager.get();
     
     if(!fs::exists("usr/bin/nvr/"))
     {
@@ -194,6 +195,11 @@ int main(int argc, char **argv)
             //goto END;
         }
     }
+
+    if (data.update_manager == nullptr) {
+        std::cerr << "data->update_manager is nullptr!" << std::endl;
+        exit(1);
+    }
     
     SPDLOG_INFO("sleep end");
     /*
@@ -201,6 +207,7 @@ int main(int argc, char **argv)
 	led_board_red->write_value(true);
 	led_board_yel->write_value(true);
 	*/
+    
     
     data.timer1_id = g_timeout_add_full(
         G_PRIORITY_HIGH,
@@ -213,6 +220,8 @@ int main(int argc, char **argv)
         SPDLOG_ERROR("Failed to add timer1.");
         exit(-1);
     }
+
+    SPDLOG_INFO("test-1");
     
     pid = fork();
     data.update_manager->set_pid(pid);
@@ -224,16 +233,24 @@ int main(int argc, char **argv)
 		execl("/usr/bin/nvr/nvr", "/usr/bin/nvr/nvr", "-r", "now", nullptr);
 		SPDLOG_ERROR("Failed to exec nvr.");
 		exit(-1);
-	} 
+	}
+
+    SPDLOG_INFO("test-2");
 	
 	data.signal_int_id = g_unix_signal_add(SIGINT, G_SOURCE_FUNC(signal_intr_cb), &data);
     data.signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), &data);
     data.signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), &data);
+
+    SPDLOG_INFO("test-3");
     
+   
+    SPDLOG_INFO("test-4");
     data.update_manager->start_update_proc();
-    
+    SPDLOG_INFO("test-5");
     data.main_loop = g_main_loop_new(nullptr, FALSE);
+    SPDLOG_INFO("test-6");
     g_main_loop_run(data.main_loop);
+    SPDLOG_INFO("test-7");
 
     kill(pid, SIGTERM);
     waitpid(pid, &status, 0);
@@ -250,5 +267,6 @@ int main(int argc, char **argv)
     
     std::exit(0);
 }
+
 
 
