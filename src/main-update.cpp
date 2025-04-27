@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <atomic>
 #include <getopt.h>
+#include <fstream>
 #include <filesystem>
 #include <sys/epoll.h>
 #include <sys/types.h>
@@ -14,255 +15,380 @@
 #include <net/if.h>
 #include <iostream>
 #include "gpio.hpp"
-#include "update_manager.hpp"
 #include "util.hpp"
 #include "logging.hpp"
 #include <glib-unix.h>
 
-struct callback_data_t {
-    callback_data_t()
-        : 
-          signal_int_id(0),
-          signal_term_id(0),
-          timer1_id(0),
-          update_manager(nullptr)
-    {}
-    guint signal_int_id;
-    guint signal_term_id;
-    guint timer1_id;
 
-    std::atomic<bool> interrupted;
-    nvr::update_manager *update_manager;
-    GMainLoop *main_loop;
-};
-
-std::atomic<pid_t> nvr_pid_;
-std::thread thread_;
-int loop = 1;
 namespace fs = std::filesystem;
+int g_mount_status = 0;
+guint signal_int_id;
+guint signal_term_id;
+guint timer1_id;
+pid_t pid = -1;     //初期化時は-1
+nvr::gpio_out *led_board_green;
+nvr::gpio_out *led_board_red;
+nvr::gpio_out *led_board_yel;
 
-static gboolean timer1_cb(gpointer udata)
+
+#define PATH_UPDATE		"/mnt/sd/"
+#define PATH_EXECUTE	"/tmp/app_exe/"
+
+bool check_proc_mounts();
+inline bool is_root_file_exists()noexcept;
+bool is_sd_card();
+bool get_update_file( char* name );
+bool get_execute_file( char* name );
+bool execute();
+bool update();
+
+/***********************************************************
+***********************************************************/
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+static gboolean timer1_cb(gpointer udata) 
 {
-    callback_data_t *data = static_cast<callback_data_t *>(udata);
-
-    data->update_manager->timer_process();
-
+	if( update() == true )
+	{
+		execute();
+	}
+    
     return G_SOURCE_CONTINUE;
 }
 
-static void on_interrupted(callback_data_t *data)
-{
-    loop = 0;
-}
+/*----------------------------------------------------------
+----------------------------------------------------------*/
 
 static gboolean signal_intr_cb(gpointer udata)
 {
     SPDLOG_INFO("SIGINTR receiverd.");
-
-    callback_data_t* data = static_cast<callback_data_t*>(udata);
-
-    on_interrupted(data);
-
-    /* remove signal handler */
-    data->signal_int_id = 0;
+    GMainLoop *loop = (GMainLoop *)udata;
+    g_main_loop_quit(loop);
     return G_SOURCE_REMOVE;
 }
 
+/*----------------------------------------------------------
+----------------------------------------------------------*/
 static gboolean signal_term_cb(gpointer udata)
 {
     SPDLOG_INFO("SIGTERM receiverd.");
-
-    callback_data_t* data = static_cast<callback_data_t*>(udata);
-
-    on_interrupted(data);
-
-    /* remove signal handler */
-    data->signal_term_id = 0;
+    GMainLoop *loop = (GMainLoop *)udata;
+    g_main_loop_quit(loop);
     return G_SOURCE_REMOVE;
 }
 
-/*
-void update_proc(callback_data_t* data)
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+bool check_proc_mounts()
 {
-	while(1)
+    static const std::filesystem::path proc_mounts{"/proc/mounts"};
+    static const char *dev_file = "/dev/mmcblk1p1";
+
+    try
+    {
+        std::ifstream ifs(proc_mounts);
+        std::string line;
+
+        while (std::getline(ifs, line))
+        {
+            if (line.find(dev_file) != std::string::npos)
+            {
+                return true;
+            }
+        }
+    }
+    catch (std::exception &ex)
+    {
+        SPDLOG_ERROR("Failed to check mout point: {}.", ex.what());
+    }
+
+    return false;
+}
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+inline bool is_root_file_exists() noexcept
+{
+	static const char *root_file_ = "/mnt/sd/.nrs_video_data";
+    std::error_code ec;
+    return std::filesystem::exists(root_file_, ec);
+}
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+bool is_sd_card()
+{
+    if (check_proc_mounts() && is_root_file_exists()) {
+        return true;
+    }
+
+    return false;
+}
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+bool get_update_file( char* name )
+{
+    for (const fs::directory_entry& x : fs::directory_iterator(PATH_UPDATE)) 
+    {
+        std::cout << x.path() << std::endl;
+        if(x.path().filename().string().find("nvr")!=std::string::npos){
+            std::string filename = x.path().filename().string();
+        	std::strcpy(name, filename.c_str());
+            return true;
+        }
+    }
+
+	return false;
+}
+
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+bool get_execute_file( char* name )
+{
+    for (const fs::directory_entry& x : fs::directory_iterator(PATH_EXECUTE)) 
+    {
+        std::cout << x.path() << std::endl;
+        std::string filename = x.path().filename().string();
+        std::strcpy(name, filename.c_str());
+        return true;
+    }
+
+	return false;
+}
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+bool execute()
+{
+	SPDLOG_INFO("execute()");
+    char exe_name[256];
+    if(!get_execute_file(exe_name)){
+    	SPDLOG_INFO("get_execute_file false");
+        return false;
+    }
+
+    pid_t new_pid = fork();
+    if (pid < 0) 
+    {
+        SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
+        return false;
+    } 
+    else
+    {
+        pid = new_pid;
+        char exe_path[256];
+        strcpy( exe_path, PATH_EXECUTE );
+    	strcat( exe_path, exe_name );
+    	
+        execl( exe_path  , exe_path, "-r", "now", nullptr);
+        SPDLOG_ERROR("Failed to exec nvr.");
+        exit(-1);
+    }
+    
+    return true;
+}
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+bool update()
+{	
+	if( is_sd_card() == false )
 	{
-		SPDLOG_INFO("update_proc");
-		int status = data->update_manager->get_update_status();
-		if( status == 1 )
-			{
-				pid_t pid = nvr_pid_.load();
-				kill(pid, SIGTERM);
-				waitpid(pid, &status, 0);
-				nvr_pid_.store(-1);
-				data->update_manager->start_update();
-			}
-			else if( status == 5)
-			{
-			pid_t new_pid = fork();
-			if (new_pid < 0) {
-				SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
-			} else if (new_pid == 0) {
-				nvr_pid_.store(new_pid);
-				execl("/usr/bin/nvr", "/usr/bin/nvr", "-r", "now", nullptr);
-				SPDLOG_ERROR("Failed to exec nvr.");
-				exit(-1);
-			}      
+		SPDLOG_INFO("is_sd_card() false");
+		return false;
+	}
+	
+	
+	char update_name[256];
+	if( !get_update_file( update_name ) == false )
+	{
+		SPDLOG_INFO("get_update_file() false");
+		return false;
+	}
+	
+	char update_path[256];
+	strcpy( update_path, PATH_UPDATE );
+	strcat( update_path, update_name );
+	
+	
+	char execute_name[256];
+	char exe_path[256];
+	if( get_execute_file( execute_name ) == false )
+	{
+		SPDLOG_INFO("get_execute_file() false");
+        // 実行ファイルが無いのでコピーだけ
+        try
+        {
+        	SPDLOG_INFO("実行ファイルが無いのでコピーだけ");
+			strcpy( exe_path, PATH_EXECUTE );
+			strcat( exe_path, update_name );
+		    fs::copy_file( update_path, exe_path,
+                 fs::copy_options::overwrite_existing);
 		}
+		catch (const fs::filesystem_error& e)
+		{
+		    std::cerr << "コピーに失敗: " << e.what() << '\n';
+            return false;
+		}
+
+		return true;
+	}
+	
+	
+	if( update_name == execute_name )
+	{
+		SPDLOG_INFO("update_name == execute_name");
+		return false;
+	}
+	
+	
+	//--- プロセスを停止
+	// 
+	if( pid )
+	{
+		int status;
+		SPDLOG_INFO("PROCESS KILL...");
+		kill(pid, SIGTERM);
+		waitpid(pid, &status, 0);
+		SPDLOG_INFO("PROCESS KILLED!!");
+	}
+	
+	
+	//--- 実行ファイルを削除
+	//
+	SPDLOG_INFO("実行ファイルを削除");
+	try
+    {
+		strcpy( exe_path, PATH_EXECUTE );
+		strcat( exe_path, execute_name );
+		fs::remove( exe_path );
+	}
+	catch (const fs::filesystem_error& e)
+	{
+	    std::cerr << "実行ファイル削除失敗: " << e.what() << '\n';
+        return false;
+	}
+	
+	
+	//--- アップデートファイルをコピー
+	//
+	SPDLOG_INFO("アップデートファイルをコピー");	
+	try
+    {
+		strcpy( exe_path, PATH_EXECUTE );
+		strcat( exe_path, update_name );
+		fs::copy_file( update_path, exe_path);
+	}
+	catch (const fs::filesystem_error& e)
+	{
+	    std::cerr << "コピーに失敗: " << e.what() << '\n';
+        return false;
+	}
+	SPDLOG_INFO("コピー  OK");	
+	
+	//--- led チカチカ
+	//
+	for( int i = 0; i < 3; i++ )
+	{
+		led_board_green->write_value(true);
+		led_board_red->write_value(true);
+		led_board_yel->write_value(true);
+		sleep(1);
+		led_board_green->write_value(false);
+		led_board_red->write_value(false);
+		led_board_yel->write_value(false);
 		sleep(1);
 	}
+	
+	return true;
 }
-*/
 
-/*
-int update_proc_start(callback_data_t* data)
-{
-    SPDLOG_DEBUG("update_proc_start");
-    if (thread_.joinable()) {
-        SPDLOG_WARN("update_proc_start thread is running");
-        return 0;
-    }
 
-    thread_ = std::thread(update_proc, data);
-
-    return 0;
-}
-*/
-
+/*----------------------------------------------------------
+----------------------------------------------------------*/
 int main(int argc, char **argv)
 {
-    int rc;
-    pid_t pid;
-    int status;
-    
+	//--- init
+	//
+
     spdlog::set_level(spdlog::level::debug);
     SPDLOG_INFO("main-update");
-    
-    callback_data_t data{};
 
-    std::shared_ptr<nvr::gpio_out> led_board_green = std::make_shared<nvr::gpio_out>("193", "P9_1");
-    std::shared_ptr<nvr::gpio_out> led_board_red = std::make_shared<nvr::gpio_out>("200", "P10_0");
-    std::shared_ptr<nvr::gpio_out> led_board_yel = std::make_shared<nvr::gpio_out>("192", "P9_0");
-    std::shared_ptr<nvr::logger> logger = std::make_shared<nvr::logger>("/etc/nvr/video-recorder.log");
-
-    if (led_board_green->open(false)) {
-        SPDLOG_ERROR("Failed to open led_board_green.");
-        exit(-1);
-    }
-
-    if (led_board_red->open(false)) {
-        SPDLOG_ERROR("Failed to open led_board_red.");
-        exit(-1);
-    }
-
-    if (led_board_yel->open(false)) {
-        SPDLOG_ERROR("Failed to open led_board_yel.");
-        exit(-1);
-    }
-
-
-    std::shared_ptr<nvr::update_manager> update_manager = std::make_shared<nvr::update_manager>(
-        "/dev/mmcblk1p1",
-        "/mnt/sd",
-        "/mnt/sd/.nrs_video_data",
-        "/mnt/sd/nvr",
-        "/tmp/app_exe/nvr",
-        logger
-    );
-
-    data.update_manager = update_manager.get();
-    
-	const char *exe_dir = "/tmp/app_exe"; 
-	fs::path path(exe_dir);
-	std::error_code ec;
-
-	if (!fs::exists(path, ec)) {
-		if (!fs::create_directories(path, ec)) {
-		    SPDLOG_ERROR("Failed to make directory: {}.", path.c_str());
-		}
+	std::shared_ptr<nvr::gpio_out> led_board_green = std::make_shared<nvr::gpio_out>("193", "P9_1");
+	std::shared_ptr<nvr::gpio_out> led_board_red = std::make_shared<nvr::gpio_out>("200", "P10_0");
+	std::shared_ptr<nvr::gpio_out> led_board_yel = std::make_shared<nvr::gpio_out>("192", "P9_0");
+	std::shared_ptr<nvr::logger> logger = std::make_shared<nvr::logger>("/etc/nvr/video-recorder.log");
+	
+	if (led_board_green->open(false))
+	{
+		SPDLOG_ERROR("Failed to open led_board_green.");
+		exit(-1);
 	}
-
-	if (fs::exists(path, ec)) {
-		SPDLOG_INFO("Directory exists: {}", path.c_str());
-
-		try {
-		    fs::copy_file("/usr/bin/nvr", path / "nvr", fs::copy_options::overwrite_existing);
-		}
-		catch (const fs::filesystem_error& e) {
-		    std::cerr << "コピーに失敗: " << e.what() << '\n';
-		}
+	
+	if (led_board_red->open(false))
+	{
+		SPDLOG_ERROR("Failed to open led_board_red.");
+		exit(-1);
 	}
-
-    if (data.update_manager == nullptr) {
-        std::cerr << "data->update_manager is nullptr!" << std::endl;
-        exit(1);
-    }
-    
-    SPDLOG_INFO("sleep end");
-    /*
-	led_board_green->write_value(true);
-	led_board_red->write_value(true);
-	led_board_yel->write_value(true);
-	*/
-    
-    
-    data.timer1_id = g_timeout_add_full(
+	
+	if (led_board_yel->open(false))
+	{
+		SPDLOG_ERROR("Failed to open led_board_yel.");
+		exit(-1);
+	}
+	
+	update();
+	execute();
+	
+	
+	//--- timer start
+	//
+    timer1_id = g_timeout_add_full(
         G_PRIORITY_HIGH,
         1000,
         G_SOURCE_FUNC(timer1_cb),
-        &data,
+        nullptr,
         nullptr);
-    if (!data.timer1_id)
+    if (!timer1_id)
     {
         SPDLOG_ERROR("Failed to add timer1.");
         exit(-1);
     }
 
-    SPDLOG_INFO("test-1");
-    
-    pid = fork();
-    data.update_manager->set_pid(pid);
-    SPDLOG_INFO("fork");
-	if (pid < 0) {
-		SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
-		return -1;
-	} else if (pid == 0) {
-		execl("/tmp/app_exe/nvr", "/tmp/app_exe/nvr", "-r", "now", nullptr);
-		SPDLOG_ERROR("Failed to exec nvr.");
-		exit(-1);
-	}
+    GMainLoop *main_loop = g_main_loop_new(NULL, FALSE);
 
-    SPDLOG_INFO("test-2");
-	
-	data.signal_int_id = g_unix_signal_add(SIGINT, G_SOURCE_FUNC(signal_intr_cb), &data);
-    data.signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), &data);
-    data.signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), &data);
+    //debug
+    signal_int_id  = g_unix_signal_add(SIGINT, G_SOURCE_FUNC(signal_intr_cb), main_loop);
+    signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), main_loop);
+    //
 
-    SPDLOG_INFO("test-3");
+    g_main_loop_run(main_loop);
     
-   
-    SPDLOG_INFO("test-4");
-    data.update_manager->start_update_proc();
-    SPDLOG_INFO("test-5");
-    data.main_loop = g_main_loop_new(nullptr, FALSE);
-    SPDLOG_INFO("test-6");
-    g_main_loop_run(data.main_loop);
-    SPDLOG_INFO("test-7");
-
-    kill(pid, SIGTERM);
-    waitpid(pid, &status, 0);
-    SPDLOG_INFO("nvr kill");
-    
-    if (data.signal_int_id)
-    {
-        g_source_remove(data.signal_int_id);
+    int status;
+    if(pid){
+        kill(pid, SIGTERM);
+        waitpid(pid, &status, 0);
+        SPDLOG_INFO("nvr kill");
     }
-    if (data.signal_term_id)
+
+    if (signal_int_id)
     {
-        g_source_remove(data.signal_term_id);
+        g_source_remove(signal_int_id);
+    }
+    if (signal_term_id)
+    {
+        g_source_remove(signal_term_id);
     }
     
     std::exit(0);
+
 }
 
+/***********************************************************
+	end of file
+***********************************************************/
 
 
