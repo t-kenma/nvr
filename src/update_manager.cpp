@@ -46,6 +46,8 @@ namespace nvr {
                 //start_update();
             }
         }
+        
+        old_status = status;
 
         return;
     }
