@@ -18,6 +18,10 @@
 #include "util.hpp"
 #include "logging.hpp"
 #include <glib-unix.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sstream>
 
 
 namespace fs = std::filesystem;
