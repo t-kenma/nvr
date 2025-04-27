@@ -33,6 +33,8 @@ nvr::gpio_out *led_board_yel;
 
 #define PATH_UPDATE		"/mnt/sd/"
 #define PATH_EXECUTE	"/tmp/app_exe/"
+#define BUCKUP_EXECUTE	"/usr/bin/nvr"
+
 
 bool check_proc_mounts();
 inline bool is_root_file_exists()noexcept;
@@ -130,6 +132,7 @@ bool is_sd_card()
 ----------------------------------------------------------*/
 bool get_update_file( char* name )
 {
+	
     for (const fs::directory_entry& x : fs::directory_iterator(PATH_UPDATE)) 
     {
         std::cout << x.path() << std::endl;
@@ -148,6 +151,18 @@ bool get_update_file( char* name )
 ----------------------------------------------------------*/
 bool get_execute_file( char* name )
 {
+	SPDLOG_INFO("get_execute_file()");
+	const char *exe_dir = "/tmp/app_exe"; 
+	fs::path path(exe_dir);
+	std::error_code ec;
+	
+	if (!fs::exists(path, ec)) {
+		if (!fs::create_directories(path, ec)) {
+		    SPDLOG_ERROR("Failed to make directory: {}.", path.c_str());   
+		}
+		return false;
+	}
+	
     for (const fs::directory_entry& x : fs::directory_iterator(PATH_EXECUTE)) 
     {
         std::cout << x.path() << std::endl;
@@ -164,6 +179,33 @@ bool get_execute_file( char* name )
 bool execute()
 {
 	SPDLOG_INFO("execute()");
+	const char *exe_dir = "/tmp/app_exe"; 
+	fs::path path(exe_dir);
+	std::error_code ec;
+
+	
+	if (!fs::exists(path, ec)) {
+		if (!fs::create_directories(path, ec)) {
+		    SPDLOG_ERROR("Failed to make directory: {}.", path.c_str());
+			return false;
+		}
+		
+		//
+		try
+		{
+			char exe[256];
+			strcpy( exe, PATH_EXECUTE );
+			strcat( exe, "nvr");
+			fs::copy_file( BUCKUP_EXECUTE, exe);
+		}
+		catch (const fs::filesystem_error& e)
+		{
+			std::cerr << "コピーに失敗: " << e.what() << '\n';
+			return false;
+		}
+		SPDLOG_INFO("コピー  OK");	
+	}
+	
     char exe_name[256];
     if(!get_execute_file(exe_name)){
     	SPDLOG_INFO("get_execute_file false");
