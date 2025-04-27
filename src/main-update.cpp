@@ -52,7 +52,6 @@ static gboolean timer1_cb(gpointer udata)
 static void on_interrupted(callback_data_t *data)
 {
     loop = 0;
-
 }
 
 static gboolean signal_intr_cb(gpointer udata)
@@ -81,6 +80,7 @@ static gboolean signal_term_cb(gpointer udata)
     return G_SOURCE_REMOVE;
 }
 
+/*
 void update_proc(callback_data_t* data)
 {
 	while(1)
@@ -109,9 +109,10 @@ void update_proc(callback_data_t* data)
 		}
 		sleep(1);
 	}
-
 }
+*/
 
+/*
 int update_proc_start(callback_data_t* data)
 {
     SPDLOG_DEBUG("update_proc_start");
@@ -124,6 +125,7 @@ int update_proc_start(callback_data_t* data)
 
     return 0;
 }
+*/
 
 int main(int argc, char **argv)
 {
@@ -185,6 +187,7 @@ int main(int argc, char **argv)
     }
     
     pid = fork();
+    data.update_manager->set_pid(pid);
     SPDLOG_INFO("fork");
 	if (pid < 0) {
 		SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
@@ -199,7 +202,7 @@ int main(int argc, char **argv)
     data.signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), &data);
     data.signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), &data);
     
-    update_proc_start(&data);
+    data.update_manager->start_update_proc();
     
     data.main_loop = g_main_loop_new(nullptr, FALSE);
     g_main_loop_run(data.main_loop);
@@ -219,4 +222,5 @@ int main(int argc, char **argv)
     
     std::exit(0);
 }
+
 

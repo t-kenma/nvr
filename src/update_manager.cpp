@@ -122,7 +122,7 @@ namespace nvr {
         return ret;
     }
 
-    int update_manager::start_update()
+    int update_manager::start_update_proc()
     {
         SPDLOG_INFO("start_update");
         if (thread_.joinable()) {
@@ -131,7 +131,7 @@ namespace nvr {
         }
 
         update_result_.store(update_start);
-        thread_ = std::thread([this]{ this->update_process(); });
+        thread_ = std::thread([this]{ this->update_proc(); });
 
         return 0;
     }
@@ -141,6 +141,43 @@ namespace nvr {
         return update_result_.load();
     }
 
+
+    void update_manager::update_proc()
+    {
+        while(1)
+        {
+            SPDLOG_INFO("update_proc");
+            int status = update_status_.load();
+            if( status == 1 )
+            {
+                pid_t pid = nvr_pid_.load();
+                kill(pid, SIGTERM);
+                waitpid(pid, &status, 0);
+                nvr_pid_.store(-1);
+                //set_pid(-1);
+                update_process();
+            }
+            else if( status == 5)
+            {
+	            pid_t new_pid = fork();
+	            if (new_pid < 0) 
+	            {
+	                SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
+	            } 
+	            else if (new_pid == 0) 
+	            {
+	                nvr_pid_.store(new_pid);
+	                //set_pid(new_pid);
+	                execl("/usr/bin/nvr", "/usr/bin/nvr", "-r", "now", nullptr);
+	                SPDLOG_ERROR("Failed to exec nvr.");
+	                exit(-1);
+	            }      
+	        }
+        	sleep(1);
+        }
+    }
+
+    
     void update_manager::update_process()
     {
         int result = update_start;
@@ -181,6 +218,7 @@ namespace nvr {
 
     }
 }
+
 
 
 

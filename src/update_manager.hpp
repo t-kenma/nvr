@@ -36,7 +36,8 @@ namespace nvr {
               logger_(logger),
               mount_status_(0),
               update_result_(0),
-              update_status_(0)
+              update_status_(0),
+              nvr_pid_(-1)
         {}
        
 
@@ -46,8 +47,19 @@ namespace nvr {
         ~update_manager() = default;
 
         void timer_process(); 
-        int start_update();  
-        int get_update_status();     
+        int start_update_proc();  
+        int get_update_status();   
+        
+        inline void set_pid(pid_t val)
+		{
+		    nvr_pid_.store(val);
+		}
+
+		
+		inline pid_t get_pid()
+		{
+		    return nvr_pid_.load();
+		}
     private:
         bool wait_update();
         void update_process();
@@ -76,10 +88,12 @@ namespace nvr {
         std::atomic<int> mount_status_;
         std::atomic<int> update_status_;    
         std::shared_ptr<logger> logger_;
+        std::atomic<pid_t> nvr_pid_;    
 
     };
 }
 
 #endif
+
 
 
