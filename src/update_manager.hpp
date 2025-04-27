@@ -62,6 +62,7 @@ namespace nvr {
 		}
     private:
         bool wait_update();
+        void update_proc();
         void update_process();
 
         inline bool is_update_file_exists() noexcept
