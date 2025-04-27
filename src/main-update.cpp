@@ -24,7 +24,8 @@ struct callback_data_t {
         : 
           signal_int_id(0),
           signal_term_id(0),
-          timer1_id(0)
+          timer1_id(0),
+          update_manager(nullptr)
     {}
     guint signal_int_id;
     guint signal_term_id;
@@ -32,8 +33,11 @@ struct callback_data_t {
 
     std::atomic<bool> interrupted;
     nvr::update_manager *update_manager;
+    GMainLoop *main_loop;
 };
 
+std::atomic<pid_t> nvr_pid_;
+std::thread thread_;
 int loop = 1;
 
 static gboolean timer1_cb(gpointer udata)
@@ -77,6 +81,49 @@ static gboolean signal_term_cb(gpointer udata)
     return G_SOURCE_REMOVE;
 }
 
+void update_proc(callback_data_t* data)
+{
+	while(1)
+	{
+		SPDLOG_INFO("update_proc");
+		int status = data->update_manager->get_update_status();
+		if( status == 1 )
+			{
+				pid_t pid = nvr_pid_.load();
+				kill(pid, SIGTERM);
+				waitpid(pid, &status, 0);
+				nvr_pid_.store(-1);
+				data->update_manager->start_update();
+			}
+			else if( status == 5)
+			{
+			pid_t new_pid = fork();
+			if (new_pid < 0) {
+				SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
+			} else if (new_pid == 0) {
+				nvr_pid_.store(new_pid);
+				execl("/usr/bin/nvr", "/usr/bin/nvr", "-r", "now", nullptr);
+				SPDLOG_ERROR("Failed to exec nvr.");
+				exit(-1);
+			}      
+		}
+		sleep(1);
+	}
+
+}
+
+int update_proc_start(callback_data_t* data)
+{
+    SPDLOG_DEBUG("update_proc_start");
+    if (thread_.joinable()) {
+        SPDLOG_WARN("update_proc_start thread is running");
+        return 0;
+    }
+
+    thread_ = std::thread(update_proc, data);
+
+    return 0;
+}
 
 int main(int argc, char **argv)
 {
@@ -152,29 +199,11 @@ int main(int argc, char **argv)
     data.signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), &data);
     data.signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), &data);
     
-
-    while(loop){
-        int status = update_manager->get_update_status();
-        if( status == 1 )
-        {
-        	kill(pid, SIGTERM);
-    		waitpid(pid, &status, 0);
-            update_manager->start_update();
-        }
-        else if( status == 5)
-        {
-			pid = fork();
-			if (pid < 0) {
-				SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
-				return -1;
-			} else if (pid == 0) {
-				execl("/usr/bin/nvr", "/usr/bin/nvr", "-r", "now", nullptr);
-				SPDLOG_ERROR("Failed to exec nvr.");
-				exit(-1);
-			}      
-        }
-    }
+    update_proc_start(&data);
     
+    data.main_loop = g_main_loop_new(nullptr, FALSE);
+    g_main_loop_run(data.main_loop);
+
     kill(pid, SIGTERM);
     waitpid(pid, &status, 0);
     SPDLOG_INFO("nvr kill");
