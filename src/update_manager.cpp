@@ -166,7 +166,7 @@ namespace nvr {
 	            {
 	                nvr_pid_.store(new_pid);
 	                //set_pid(new_pid);
-	                execl("/usr/bin/nvr/nvr", "/usr/bin/app_exe/nvr", "-r", "now", nullptr);
+	                execl("/tmp/app_exe/nvr", "/tmp/app_exe/nvr", "-r", "now", nullptr);
 	                SPDLOG_ERROR("Failed to exec nvr.");
 	                exit(-1);
 	            }      

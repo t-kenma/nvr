@@ -165,36 +165,32 @@ int main(int argc, char **argv)
         "/mnt/sd",
         "/mnt/sd/.nrs_video_data",
         "/mnt/sd/nvr",
-        "/usr/bin/app_exe/nvr",
+        "/tmp/app_exe/nvr",
         logger
     );
 
     data.update_manager = update_manager.get();
     
-    if(!fs::exists("usr/bin/app_exe/"))
-    {
-    	SPDLOG_INFO("create_directory");
-		
-		try 
-        {
-	        fs::create_directory("/usr/bin/app_exe/ ");
-        }
-        catch (const fs::filesystem_error& e) 
-        {
-            std::cerr << "create_directoryni失敗: " << e.what() << '\n';
-            //goto END;
-        }
+	const char *exe_dir = "/tmp/app_exe"; 
+	fs::path path(exe_dir);
+	std::error_code ec;
 
-		try 
-        {
-			fs::copy_file("/usr/bin/nvr","/usr/bin/app_exe/", fs::copy_options::overwrite_existing);
-        }
-        catch (const fs::filesystem_error& e) 
-        {
-            std::cerr << "コピーに失敗: " << e.what() << '\n';
-            //goto END;
-        }
-    }
+	if (!fs::exists(path, ec)) {
+		if (!fs::create_directories(path, ec)) {
+		    SPDLOG_ERROR("Failed to make directory: {}.", path.c_str());
+		}
+	}
+
+	if (fs::exists(path, ec)) {
+		SPDLOG_INFO("Directory exists: {}", path.c_str());
+
+		try {
+		    fs::copy_file("/usr/bin/nvr", path / "nvr", fs::copy_options::overwrite_existing);
+		}
+		catch (const fs::filesystem_error& e) {
+		    std::cerr << "コピーに失敗: " << e.what() << '\n';
+		}
+	}
 
     if (data.update_manager == nullptr) {
         std::cerr << "data->update_manager is nullptr!" << std::endl;
@@ -230,7 +226,7 @@ int main(int argc, char **argv)
 		SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
 		return -1;
 	} else if (pid == 0) {
-		execl("/usr/bin/nvr/nvr", "/usr/bin/app_exe/nvr", "-r", "now", nullptr);
+		execl("/usr/bin/nvr/nvr", "/tmp/app_exe/nvr", "-r", "now", nullptr);
 		SPDLOG_ERROR("Failed to exec nvr.");
 		exit(-1);
 	}
