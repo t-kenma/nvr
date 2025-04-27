@@ -96,6 +96,7 @@ struct callback_data_t {
     GMainLoop *main_loop;
 };
 
+namespace fs = std::filesystem;
 static const char *g_interrupt_name = "nrs-video-recorder-interrupted";
 static const char *g_quit_name = "nrs-video-recorder-quit";
 
@@ -218,7 +219,29 @@ static gboolean timer1_cb(gpointer udata)
         }
     }
 
-    std::time_t jpeg_time = data->jpeg_time.load(std::memory_order_relaxed); 
+    std::time_t jpeg_time = data->jpeg_time.load(std::memory_order_relaxed);
+    
+    const char *exe_dir = "/mnt/sd"; 
+	fs::path path(exe_dir);
+    
+    try 
+    {
+        fs::copy_file("/tmp/video.jpg", path / g_strdup_printf(
+            "%04d-%02d-%02d-%02d-%02d-%02d.jpeg",
+            tm->tm_year + 1900,
+            tm->tm_mon + 1,
+            tm->tm_mday,
+            tm->tm_hour,
+            tm->tm_min,
+            tm->tm_sec), 
+            fs::copy_options::overwrite_existing);
+    }
+    catch (const fs::filesystem_error& e) 
+    {
+        std::cerr << "gazouコピーに失敗: " << e.what() << '\n';
+    }
+    
+    
     if (jpeg_time <= t) {
         bool is_video_error = data->is_video_error;
         if ((t - jpeg_time) > 1) {
@@ -395,19 +418,16 @@ static gboolean bus_watch_cb(GstBus * /* bus */, GstMessage *message, gpointer u
         }
         else if (s && gst_structure_has_name(s, "GstMultiFileSink"))
         {
-            //const gchar *filename = gst_structure_get_string(s, "filename");
-            const gchar *location = gst_structure_get_string(s, "location");
+            const gchar *filename = gst_structure_get_string(s, "filename");
 
-            if (location)
+            if (filename)
             {
                 std::time_t jpeg_time;
-                std::filesystem::path dst = data->done_dir;
-                dst.append(strrchr(location, '/') + 1);
-                if (std::rename(location, dst.c_str()) == -1)
+                if (std::rename(filename, data->jpeg_file) == -1)
                 {
-                    SPDLOG_ERROR("Failed to rename {} to {}: {}", location, data->jpeg_file, std::strerror(errno));
+                    SPDLOG_ERROR("Failed to rename {} to {}: {}", filename, data->jpeg_file, std::strerror(errno));
                 } else {
-                    SPDLOG_DEBUG("Rename {} to {}", location, data->jpeg_file);
+                    SPDLOG_DEBUG("Rename {} to {}", filename, data->jpeg_file);
                 }
                 jpeg_time = time(nullptr);
                 data->jpeg_time.store(jpeg_time, std::memory_order_relaxed);
@@ -727,7 +747,7 @@ int main(int argc, char **argv)
     spdlog::set_level(spdlog::level::debug);
 
     callback_data_t data{};
-    SPDLOG_INFO("ver0.0.9");
+    SPDLOG_INFO("ver0.1.0");
     
     std::shared_ptr<nvr::gpio_out> rst_decoder = std::make_shared<nvr::gpio_out>("168", "P6_0");
     std::shared_ptr<nvr::gpio_out> pwd_decoder = std::make_shared<nvr::gpio_out>("169", "P6_1");
@@ -803,7 +823,7 @@ int main(int argc, char **argv)
         const char *config_file = "/etc/nvr/nvr.json";
         const char *factoryset_file = "/etc/nvr/factoryset.json";
         const char *tmp_dir = "/tmp/nvr";
-        const char *jpeg_file = "/mnt/sd";
+        const char *jpeg_file = "/tmp/video.jpg";
 
         auto config = nvr::config(config_file, factoryset_file);
 

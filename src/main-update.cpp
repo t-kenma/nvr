@@ -226,7 +226,7 @@ int main(int argc, char **argv)
 		SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
 		return -1;
 	} else if (pid == 0) {
-		execl("/usr/bin/nvr/nvr", "/tmp/app_exe/nvr", "-r", "now", nullptr);
+		execl("/tmp/app_exe/nvr", "/tmp/app_exe/nvr", "-r", "now", nullptr);
 		SPDLOG_ERROR("Failed to exec nvr.");
 		exit(-1);
 	}
