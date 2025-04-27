@@ -145,6 +145,7 @@ namespace nvr {
     {
         while(1)
         {
+        	SPDLOG_INFO("update_proc.");
             int status = update_status_.load();
             if( status == 1 )
             {
