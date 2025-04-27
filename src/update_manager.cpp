@@ -168,7 +168,7 @@ namespace nvr {
 	            {
 	                nvr_pid_.store(new_pid);
 	                //set_pid(new_pid);
-	                execl("/usr/bin/nvr", "/usr/bin/nvr", "-r", "now", nullptr);
+	                execl("/usr/bin/nvr/nvr", "/usr/bin/nvr/nvr", "-r", "now", nullptr);
 	                SPDLOG_ERROR("Failed to exec nvr.");
 	                exit(-1);
 	            }      
@@ -184,7 +184,8 @@ namespace nvr {
         static const char *new_udt_file = update_file_.c_str();
         static const char *old_udt_file = nvr_file_.c_str();
         static const char *rename_file = nvr_file_.c_str();
-
+        
+        /*
         SPDLOG_INFO("nvr rename.....\n");
         try
         {
@@ -196,8 +197,9 @@ namespace nvr {
             update_result_.store(update_err1);
             goto END;
         }
+        */
 
-        SPDLOG_INFO("SDカードから /usr/bin/nvr にコピーしています...\n");	
+        SPDLOG_INFO("SDカードから /usr/bin/nvr/nvr にコピーしています...\n");	
         try 
         {
             fs::copy_file(new_udt_file, old_udt_file, fs::copy_options::overwrite_existing);
@@ -211,8 +213,7 @@ namespace nvr {
         
         update_status_.store(update_ok);
         sync();
-
-        
+    
         END:
         SPDLOG_WARN("<<< update_process {}",result);
 

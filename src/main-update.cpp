@@ -39,6 +39,7 @@ struct callback_data_t {
 std::atomic<pid_t> nvr_pid_;
 std::thread thread_;
 int loop = 1;
+namespace fs = std::filesystem;
 
 static gboolean timer1_cb(gpointer udata)
 {
@@ -159,20 +160,47 @@ int main(int argc, char **argv)
         exit(-1);
     }
 
+
     std::shared_ptr<nvr::update_manager> update_manager = std::make_shared<nvr::update_manager>(
         "/dev/mmcblk1p1",
         "/mnt/sd",
         "/mnt/sd/.nrs_video_data",
         "/mnt/sd/nvr",
-        "/usr/bin/nvr",
+        "/usr/bin/nvr/nvr",
         logger
     );
+    
+    if(!fs::exists("usr/bin/nvr/"))
+    {
+    	SPDLOG_INFO("create_directory");
+		
+		try 
+        {
+	        fs::create_directory("/usr/bin/nvr/ ");
+        }
+        catch (const fs::filesystem_error& e) 
+        {
+            std::cerr << "create_directoryni失敗: " << e.what() << '\n';
+            //goto END;
+        }
 
-    sleep(3);
+		try 
+        {
+			fs::copy_file("/usr/bin/nvr","/usr/bin/nvr/", fs::copy_options::overwrite_existing);
+        }
+        catch (const fs::filesystem_error& e) 
+        {
+            std::cerr << "コピーに失敗: " << e.what() << '\n';
+            //goto END;
+        }
+    }
+    
     SPDLOG_INFO("sleep end");
+    /*
 	led_board_green->write_value(true);
 	led_board_red->write_value(true);
 	led_board_yel->write_value(true);
+	*/
     
     data.timer1_id = g_timeout_add_full(
         G_PRIORITY_HIGH,
@@ -193,7 +221,7 @@ int main(int argc, char **argv)
 		SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
 		return -1;
 	} else if (pid == 0) {
-		execl("/usr/bin/nvr", "/usr/bin/nvr", "-r", "now", nullptr);
+		execl("/usr/bin/nvr/nvr", "/usr/bin/nvr/nvr", "-r", "now", nullptr);
 		SPDLOG_ERROR("Failed to exec nvr.");
 		exit(-1);
 	} 
