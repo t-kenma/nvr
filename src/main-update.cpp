@@ -140,11 +140,17 @@ inline bool is_root_file_exists() noexcept
 ----------------------------------------------------------*/
 bool is_sd_card()
 {
-    if (check_proc_mounts() && is_root_file_exists()) {
-        return true;
+    if ( !check_proc_mounts() ){
+    	SPDLOG_INFO("check_proc_mounts false");
+    	return false;
     }
-
-    return false;
+    
+    if( !is_root_file_exists() ) {
+    	SPDLOG_INFO("is_root_file_exists false");
+        return false;
+    }
+    
+    return true;
 }
 
 /*----------------------------------------------------------
@@ -237,7 +243,7 @@ bool execute()
         SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
         return false;
     } 
-    else
+    else if( pid == 0) 
     {
         char exe_path[256];
         strcpy( exe_path, PATH_EXECUTE );
