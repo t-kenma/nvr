@@ -174,6 +174,9 @@ bool get_update_file( char* name )
 		std::cout << x.path() << std::endl;
 		std::string filename = x.path().filename().string();
 		std::cout << filename << std::endl;
+		
+		std::string::size_type pos = filename.find("nvr");
+		std::cout << pos << std::endl;
 
 		//ファイル名にnvrとついたファイルがあるかの確認(実行ファイル)
 		//
