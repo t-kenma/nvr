@@ -271,7 +271,7 @@ bool execute()
         char exe_path[256];
         strcpy( exe_path, PATH_EXECUTE );
     	strcat( exe_path, exe_name );
-    	
+    	SPDLOG_INFO("execute = {}",exe_path);
         execl( exe_path  , exe_path, "-r", "now", nullptr);
         SPDLOG_ERROR("Failed to exec nvr.");
         exit(-1);
@@ -333,6 +333,8 @@ bool update()
 		return false;
 	}
 	
+	SPDLOG_INFO("update_name = {}",update_name);
+	
 	
 	//--- プロセスを停止
 	// 
@@ -353,6 +355,7 @@ bool update()
     {
 		strcpy( exe_path, PATH_EXECUTE );
 		strcat( exe_path, execute_name );
+		SPDLOG_INFO("execute = {}",exe_path);
 		fs::remove( exe_path );
 	}
 	catch (const fs::filesystem_error& e)
@@ -369,6 +372,8 @@ bool update()
     {
 		strcpy( exe_path, PATH_EXECUTE );
 		strcat( exe_path, update_name );
+		SPDLOG_INFO("from = {}",exe_path);
+		SPDLOG_INFO("to = {}",exe_path);
 		fs::copy_file( update_path, exe_path);
 	}
 	catch (const fs::filesystem_error& e)
