@@ -35,7 +35,7 @@ nvr::gpio_out *led_board_red;
 nvr::gpio_out *led_board_yel;
 
 
-#define PATH_UPDATE		"/mnt/sd/"
+#define PATH_UPDATE		"/mnt/sd/bin/"
 #define PATH_EXECUTE	"/tmp/app_exe/"
 #define BUCKUP_EXECUTE	"/usr/bin/nvr"
 
@@ -157,6 +157,15 @@ bool is_sd_card()
 ----------------------------------------------------------*/
 bool get_update_file( char* name )
 {
+	SPDLOG_INFO("get_update_file()");
+	const char *bin_dir = "/mnt/sd/bin"; 
+	fs::path path(bin_dir);
+	std::error_code ec;	
+	
+	if (!fs::exists(path, ec)) {
+		SPDLOG_INFO("no dir");
+		return false;
+	}
 	
     for (const fs::directory_entry& x : fs::directory_iterator(PATH_UPDATE)) 
     {
