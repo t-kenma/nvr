@@ -100,6 +100,7 @@ bool check_proc_mounts()
         {
             if (line.find(dev_file) != std::string::npos)
             {
+            	SPDLOG_INFO("check_proc_mounts true");
                 return true;
             }
         }
@@ -109,6 +110,7 @@ bool check_proc_mounts()
         SPDLOG_ERROR("Failed to check mout point: {}.", ex.what());
     }
 
+	SPDLOG_INFO("check_proc_mounts false");
     return false;
 }
 
@@ -118,6 +120,19 @@ inline bool is_root_file_exists() noexcept
 {
 	static const char *root_file_ = "/mnt/sd/.nrs_video_data";
     std::error_code ec;
+    
+    try
+	{
+		std::filesystem::exists(root_file_, ec);
+		
+	}
+	catch (const fs::filesystem_error& e)
+	{
+		std::cerr << "失敗: " << e.what() << '\n';
+		return false;
+	}
+	SPDLOG_INFO("is_root_file_exists true");
+    
     return std::filesystem::exists(root_file_, ec);
 }
 
@@ -216,15 +231,14 @@ bool execute()
         return false;
     }
 
-    pid_t new_pid = fork();
-    if (new_pid < 0) 
+    pid = fork();
+    if (pid < 0) 
     {
         SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
         return false;
     } 
     else
     {
-        pid = new_pid;
         char exe_path[256];
         strcpy( exe_path, PATH_EXECUTE );
     	strcat( exe_path, exe_name );
