@@ -167,15 +167,26 @@ bool get_update_file( char* name )
 		return false;
 	}
 	
-    for (const fs::directory_entry& x : fs::directory_iterator(PATH_UPDATE)) 
-    {
-        std::cout << x.path() << std::endl;
-        if(x.path().filename().string().find("nvr")!=std::string::npos){
-            std::string filename = x.path().filename().string();
-        	std::strcpy(name, filename.c_str());
-            return true;
-        }
-    }
+	//---binフォルダにアップデータファイルがあるかの確認
+	//
+	for (const fs::directory_entry& x : fs::directory_iterator(PATH_UPDATE)) 
+	{
+		std::cout << x.path() << std::endl;
+		std::string filename = x.path().filename().string();
+		std::cout << filename << std::endl;
+
+		//ファイル名にnvrとついたファイルがあるかの確認(実行ファイル)
+		//
+		if(filename.find("nvr") == std::string::npos)
+		{
+			continue;
+		}
+		
+		//最初に見つかったファイル名を返す
+		//
+		std::strcpy(name, filename.c_str());
+		return true;
+	}
 
 	return false;
 }

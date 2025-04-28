@@ -747,7 +747,7 @@ int main(int argc, char **argv)
     spdlog::set_level(spdlog::level::debug);
 
     callback_data_t data{};
-    SPDLOG_INFO("ver0.1.1");
+    SPDLOG_INFO("ver0.1.2");
     
     std::shared_ptr<nvr::gpio_out> rst_decoder = std::make_shared<nvr::gpio_out>("168", "P6_0");
     std::shared_ptr<nvr::gpio_out> pwd_decoder = std::make_shared<nvr::gpio_out>("169", "P6_1");
