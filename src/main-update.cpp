@@ -180,7 +180,7 @@ bool get_update_file( char* name )
 
 		//ファイル名にnvrとついたファイルがあるかの確認(実行ファイル)
 		//
-		if(filename.find("nvr") != 0)
+		if(pos != 0)
 		{
 			continue;
 		}
