@@ -292,7 +292,7 @@ bool update()
 	
 	
 	char update_name[256];
-	if( !get_update_file( update_name ) == false )
+	if( get_update_file( update_name ) == false )
 	{
 		SPDLOG_INFO("get_update_file() false");
 		return false;
