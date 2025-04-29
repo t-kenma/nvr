@@ -360,6 +360,7 @@ bool update()
     {
 		fs::path del_path = fs::path(PATH_EXECUTE) / execute_name;
     	fs::remove( del_path );
+    	SPDLOG_INFO("del execute = {}",del_path.string());
     /*
 		strcpy( exe_path, PATH_EXECUTE );
 		strcat( exe_path, execute_name );
@@ -380,8 +381,11 @@ bool update()
 	try
     {
     	fs::path exe_path = fs::path(PATH_EXECUTE) / update_name;
+    	SPDLOG_INFO("from = {}",update_path.string());
+		SPDLOG_INFO("to = {}",exe_path.string());
     	fs::copy_file( update_path, exe_path,
                  fs::copy_options::overwrite_existing);
+        SPDLOG_INFO("コピー  END");	
     /*
 		strcpy( exe_path, PATH_EXECUTE );
 		strcat( exe_path, update_name );
@@ -401,6 +405,7 @@ bool update()
 	//
 	for( int i = 0; i < 3; i++ )
 	{
+		SPDLOG_INFO("led チカチカ");	
 		led_board_green->write_value(true);
 		led_board_red->write_value(true);
 		led_board_yel->write_value(true);
