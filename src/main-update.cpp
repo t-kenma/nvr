@@ -355,7 +355,7 @@ bool update()
     {
 		strcpy( exe_path, PATH_EXECUTE );
 		strcat( exe_path, execute_name );
-		SPDLOG_INFO("execute = {}",exe_path);
+		SPDLOG_INFO("del execute = {}",exe_path);
 		fs::remove( exe_path );
 	}
 	catch (const fs::filesystem_error& e)
@@ -372,7 +372,7 @@ bool update()
     {
 		strcpy( exe_path, PATH_EXECUTE );
 		strcat( exe_path, update_name );
-		SPDLOG_INFO("from = {}",exe_path);
+		SPDLOG_INFO("from = {}",update_path);
 		SPDLOG_INFO("to = {}",exe_path);
 		fs::copy_file( update_path, exe_path);
 	}
@@ -397,6 +397,7 @@ bool update()
 		sleep(1);
 	}
 	
+	SPDLOG_INFO("update() true");
 	return true;
 }
 
