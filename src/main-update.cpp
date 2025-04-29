@@ -453,6 +453,7 @@ bool update()
 	
 	//--- led チカチカ
 	//
+	/*
 	for( int i = 0; i < 3; i++ )
 	{
 		SPDLOG_INFO("led チカチカ");	
@@ -463,6 +464,7 @@ bool update()
 		led_board_red->write_value(false);
 		led_board_yel->write_value(false);
 	}
+	*/
 	
 	SPDLOG_INFO("update() true");
 	return true;
