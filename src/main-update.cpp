@@ -298,13 +298,15 @@ bool update()
 		return false;
 	}
 	
+	
+	/*
 	char update_path[256];
 	strcpy( update_path, PATH_UPDATE );
 	strcat( update_path, update_name );
-	
+	*/
+	fs::path update_path = fs::path(PATH_UPDATE) / update_name;
 	
 	char execute_name[256];
-	char exe_path[256];
 	if( get_execute_file( execute_name ) == false )
 	{
 		SPDLOG_INFO("get_execute_file() false");
@@ -312,9 +314,12 @@ bool update()
         try
         {
         	SPDLOG_INFO("実行ファイルが無いのでコピーだけ");
+        	/*
 			strcpy( exe_path, PATH_EXECUTE );
 			strcat( exe_path, update_name );
-		    fs::copy_file( update_path, exe_path,
+			*/
+			fs::path copy_path = fs::path(PATH_EXECUTE) / update_name;
+		    fs::copy_file( update_path, copy_path,
                  fs::copy_options::overwrite_existing);
 		}
 		catch (const fs::filesystem_error& e)
@@ -353,10 +358,14 @@ bool update()
 	SPDLOG_INFO("実行ファイルを削除");
 	try
     {
+		fs::path del_path = fs::path(PATH_EXECUTE) / execute_name;
+    	fs::remove( del_path );
+    /*
 		strcpy( exe_path, PATH_EXECUTE );
 		strcat( exe_path, execute_name );
 		SPDLOG_INFO("del execute = {}",exe_path);
 		fs::remove( exe_path );
+	*/
 	}
 	catch (const fs::filesystem_error& e)
 	{
@@ -370,11 +379,16 @@ bool update()
 	SPDLOG_INFO("アップデートファイルをコピー");	
 	try
     {
+    	fs::path exe_path = fs::path(PATH_EXECUTE) / update_name;
+    	fs::copy_file( update_path, exe_path,
+                 fs::copy_options::overwrite_existing);
+    /*
 		strcpy( exe_path, PATH_EXECUTE );
 		strcat( exe_path, update_name );
 		SPDLOG_INFO("from = {}",update_path);
 		SPDLOG_INFO("to = {}",exe_path);
 		fs::copy_file( update_path, exe_path);
+	*/
 	}
 	catch (const fs::filesystem_error& e)
 	{
