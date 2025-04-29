@@ -55,63 +55,70 @@ bool update();
 ----------------------------------------------------------*/
 static gboolean timer1_cb(gpointer udata) 
 {
+	//1000ms タイマー処理
+	//
 	if( update() == true )
 	{
 		execute();
 	}
-    
-    return G_SOURCE_CONTINUE;
+	
+	return G_SOURCE_CONTINUE;
 }
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
-
 static gboolean signal_intr_cb(gpointer udata)
 {
-    SPDLOG_INFO("SIGINTR receiverd.");
-    GMainLoop *loop = (GMainLoop *)udata;
-    g_main_loop_quit(loop);
-    return G_SOURCE_REMOVE;
+	//GMainLoopの終了(プロセスの終了)
+	//
+	SPDLOG_INFO("SIGINTR receiverd.");
+	GMainLoop *loop = (GMainLoop *)udata;
+	g_main_loop_quit(loop);
+	return G_SOURCE_REMOVE;
 }
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
 static gboolean signal_term_cb(gpointer udata)
 {
-    SPDLOG_INFO("SIGTERM receiverd.");
-    GMainLoop *loop = (GMainLoop *)udata;
-    g_main_loop_quit(loop);
-    return G_SOURCE_REMOVE;
+	//GMainLoopの終了(プロセスの終了)
+	//
+	SPDLOG_INFO("SIGTERM receiverd.");
+	GMainLoop *loop = (GMainLoop *)udata;
+	g_main_loop_quit(loop);
+	return G_SOURCE_REMOVE;
 }
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
 bool check_proc_mounts()
 {
-    static const std::filesystem::path proc_mounts{"/proc/mounts"};
-    static const char *dev_file = "/dev/mmcblk1p1";
-
-    try
-    {
-        std::ifstream ifs(proc_mounts);
-        std::string line;
-
-        while (std::getline(ifs, line))
-        {
-            if (line.find(dev_file) != std::string::npos)
-            {
-            	SPDLOG_INFO("check_proc_mounts true");
-                return true;
-            }
-        }
-    }
-    catch (std::exception &ex)
-    {
-        SPDLOG_ERROR("Failed to check mout point: {}.", ex.what());
-    }
-
+	static const std::filesystem::path proc_mounts{"/proc/mounts"};
+	static const char *dev_file = "/dev/mmcblk1p1";
+	
+	
+	// /proc/mountsに/dev/mmcblk1p1の記述があるか
+	//
+	try
+	{
+		std::ifstream ifs(proc_mounts);
+		std::string line;
+		
+		while (std::getline(ifs, line))
+		{
+			if (line.find(dev_file) != std::string::npos){
+				SPDLOG_INFO("check_proc_mounts true");
+				return true;
+			}
+		}
+	}
+	catch (std::exception &ex)
+	{
+		SPDLOG_ERROR("Failed to check mout point: {}.", ex.what());
+	}
+	
 	SPDLOG_INFO("check_proc_mounts false");
-    return false;
+	return false;
 }
 
 /*----------------------------------------------------------
@@ -119,38 +126,40 @@ bool check_proc_mounts()
 inline bool is_root_file_exists() noexcept
 {
 	static const char *root_file_ = "/mnt/sd/.nrs_video_data";
-    std::error_code ec;
-    
-    try
+	std::error_code ec;
+	
+	
+	//---SDカードに.nrs_video_dataファイルがあるかの確認
+	//
+	try
 	{
-		std::filesystem::exists(root_file_, ec);
-		
+		std::filesystem::exists(root_file_, ec);	
 	}
 	catch (const fs::filesystem_error& e)
 	{
 		std::cerr << "失敗: " << e.what() << '\n';
 		return false;
 	}
+	
 	SPDLOG_INFO("is_root_file_exists true");
-    
-    return std::filesystem::exists(root_file_, ec);
+	return std::filesystem::exists(root_file_, ec);
 }
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
 bool is_sd_card()
 {
-    if ( !check_proc_mounts() ){
-    	SPDLOG_INFO("check_proc_mounts false");
-    	return false;
-    }
-    
-    if( !is_root_file_exists() ) {
-    	SPDLOG_INFO("is_root_file_exists false");
-        return false;
-    }
-    
-    return true;
+	if ( !check_proc_mounts() ){
+		SPDLOG_INFO("check_proc_mounts false");
+		return false;
+	}
+	
+	if( !is_root_file_exists() ) {
+		SPDLOG_INFO("is_root_file_exists false");
+		return false;
+	}
+	
+	return true;
 }
 
 /*----------------------------------------------------------
@@ -162,10 +171,14 @@ bool get_update_file( char* name )
 	fs::path path(bin_dir);
 	std::error_code ec;	
 	
+	
+	//---/mnt/sd/bin ディレクトリの存在確認
+	//
 	if (!fs::exists(path, ec)) {
 		SPDLOG_INFO("no dir");
 		return false;
 	}
+	
 	
 	//---binフォルダにアップデータファイルがあるかの確認
 	//
@@ -177,23 +190,23 @@ bool get_update_file( char* name )
 		
 		int pos = filename.find("nvr");
 		std::cout << pos << std::endl;
-
+		
+		
 		//ファイル名にnvrとついたファイルがあるかの確認(実行ファイル)
 		//
-		if(pos != 0)
-		{
+		if(pos != 0){
 			continue;
 		}
+		
 		
 		//最初に見つかったファイル名を返す
 		//
 		std::strcpy(name, filename.c_str());
 		return true;
 	}
-
+	
 	return false;
 }
-
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
@@ -204,21 +217,27 @@ bool get_execute_file( char* name )
 	fs::path path(exe_dir);
 	std::error_code ec;
 	
-	if (!fs::exists(path, ec)) {
+	//---/tmp/app_exeディレクトリの存在確認
+	//
+	if (!fs::exists(path, ec))
+	{
 		if (!fs::create_directories(path, ec)) {
-		    SPDLOG_ERROR("Failed to make directory: {}.", path.c_str());   
+			SPDLOG_ERROR("Failed to make directory: {}.", path.c_str());   
 		}
 		return false;
 	}
 	
-    for (const fs::directory_entry& x : fs::directory_iterator(PATH_EXECUTE)) 
-    {
-        std::cout << x.path() << std::endl;
-        std::string filename = x.path().filename().string();
-        std::strcpy(name, filename.c_str());
-        return true;
-    }
-
+	
+	//"/tmp/app_exe にあるファイル名を取得
+	//
+	for (const fs::directory_entry& x : fs::directory_iterator(PATH_EXECUTE)) 
+	{
+		std::cout << x.path() << std::endl;
+		std::string filename = x.path().filename().string();
+		std::strcpy(name, filename.c_str());
+		return true;
+	}
+	
 	return false;
 }
 
@@ -230,14 +249,18 @@ bool execute()
 	const char *exe_dir = "/tmp/app_exe"; 
 	fs::path path(exe_dir);
 	std::error_code ec;
-
 	
+	//---/tmp/app_exeディレクトリの存在確認
+	//
 	if (!fs::exists(path, ec)) {
+		//---ディレクトリがないので作成
+		//
 		if (!fs::create_directories(path, ec)) {
-		    SPDLOG_ERROR("Failed to make directory: {}.", path.c_str());
+			SPDLOG_ERROR("Failed to make directory: {}.", path.c_str());
 			return false;
 		}
 		
+		//---実行ファイルを作成したディレクトリにコピー
 		//
 		try
 		{
@@ -251,98 +274,125 @@ bool execute()
 			std::cerr << "コピーに失敗: " << e.what() << '\n';
 			return false;
 		}
-		SPDLOG_INFO("コピー  OK");	
+			SPDLOG_INFO("コピー  OK");	
 	}
 	
-    char exe_name[256];
-    if(!get_execute_file(exe_name)){
-    	SPDLOG_INFO("get_execute_file false");
-        return false;
-    }
-
-    pid = fork();
-    if (pid < 0) 
-    {
-        SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
-        return false;
-    } 
-    else if( pid == 0) 
-    {
-        char exe_path[256];
-        strcpy( exe_path, PATH_EXECUTE );
-    	strcat( exe_path, exe_name );
-    	SPDLOG_INFO("execute = {}",exe_path);
-        execl( exe_path  , exe_path, "-r", "now", nullptr);
-        SPDLOG_ERROR("Failed to exec nvr.");
-        exit(-1);
-    }
-    
-    return true;
+	
+	//---実行ファイル名の取得
+	//
+	char exe_name[256];
+	if(!get_execute_file(exe_name)){
+		SPDLOG_INFO("get_execute_file false");
+		return false;
+	}
+	
+	
+	//---プロセスを複製し子プロセスを作成
+	//
+	pid = fork();
+	SPDLOG_INFO(" pid = {}",pid);
+	if (pid < 0) 
+	{
+		//---プロセスの複製失敗
+		//
+		SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
+		return false;
+	} 
+	else
+	if( pid == 0) 
+	{
+		//---子プロセス処理
+		//
+		SPDLOG_INFO(" child pid = {}",pid);
+		char exe_path[256];
+		strcpy( exe_path, PATH_EXECUTE );
+		strcat( exe_path, exe_name );
+		SPDLOG_INFO("execute = {}",exe_path);
+		
+		
+		//実行ファイルを実行
+		//
+		execl( exe_path  , exe_path, "-r", "now", nullptr);
+		SPDLOG_ERROR("Failed to exec nvr.");
+		
+		
+		//子プロセスの終了
+		//
+		exit(-1);
+	}
+	
+	return true;
 }
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
 bool update()
 {	
-	if( is_sd_card() == false )
-	{
+	//---SDカードの挿入確認
+	//
+	if( is_sd_card() == false ){
 		SPDLOG_INFO("is_sd_card() false");
 		return false;
 	}
 	
 	
+	//アップデータファイルの存在確認
+	//
 	char update_name[256];
-	if( get_update_file( update_name ) == false )
-	{
+	if( get_update_file( update_name ) == false ){
 		SPDLOG_INFO("get_update_file() false");
 		return false;
 	}
 	
 	
+	//---実行ファイルの存在確認
+	//
 	/*
 	char update_path[256];
 	strcpy( update_path, PATH_UPDATE );
 	strcat( update_path, update_name );
 	*/
 	fs::path update_path = fs::path(PATH_UPDATE) / update_name;
-	
+
 	char execute_name[256];
 	if( get_execute_file( execute_name ) == false )
 	{
 		SPDLOG_INFO("get_execute_file() false");
-        // 実行ファイルが無いのでコピーだけ
-        try
-        {
-        	SPDLOG_INFO("実行ファイルが無いのでコピーだけ");
-        	/*
+		// 実行ファイルが無いのでコピーだけ
+		try
+		{
+			SPDLOG_INFO("実行ファイルが無いのでコピーだけ");
+			/*
 			strcpy( exe_path, PATH_EXECUTE );
 			strcat( exe_path, update_name );
 			*/
 			fs::path copy_path = fs::path(PATH_EXECUTE) / update_name;
-		    fs::copy_file( update_path, copy_path,
-                 fs::copy_options::overwrite_existing);
+			fs::copy_file( update_path, copy_path,
+			fs::copy_options::overwrite_existing);
 		}
 		catch (const fs::filesystem_error& e)
 		{
-		    std::cerr << "コピーに失敗: " << e.what() << '\n';
-            return false;
+			std::cerr << "コピーに失敗: " << e.what() << '\n';
+			return false;
 		}
-
+		
 		return true;
 	}
 	
 	
-	if( update_name == execute_name )
-	{
+	//---アップデートファイルと実行ファイルが同じファイルか
+	//
+	SPDLOG_INFO("update_name = {}",update_name);
+	SPDLOG_INFO("execute_name = {}",execute_name);
+	if( update_name == execute_name ){
 		SPDLOG_INFO("update_name == execute_name");
 		return false;
 	}
 	
-	SPDLOG_INFO("update_name = {}",update_name);
-	
 	
 	//--- プロセスを停止
-	// 
+	//
+	SPDLOG_INFO(" pid = {}",pid);
 	if( pid )
 	{
 		int status;
@@ -357,21 +407,21 @@ bool update()
 	//
 	SPDLOG_INFO("実行ファイルを削除");
 	try
-    {
+	{
 		fs::path del_path = fs::path(PATH_EXECUTE) / execute_name;
-    	fs::remove( del_path );
-    	SPDLOG_INFO("del execute = {}",del_path.string());
-    /*
+		fs::remove( del_path );
+		SPDLOG_INFO("del execute = {}",del_path.string());
+		/*
 		strcpy( exe_path, PATH_EXECUTE );
 		strcat( exe_path, execute_name );
 		SPDLOG_INFO("del execute = {}",exe_path);
 		fs::remove( exe_path );
-	*/
+		*/
 	}
 	catch (const fs::filesystem_error& e)
 	{
-	    std::cerr << "実行ファイル削除失敗: " << e.what() << '\n';
-        return false;
+		std::cerr << "実行ファイル削除失敗: " << e.what() << '\n';
+		return false;
 	}
 	
 	
@@ -379,25 +429,25 @@ bool update()
 	//
 	SPDLOG_INFO("アップデートファイルをコピー");	
 	try
-    {
-    	fs::path exe_path = fs::path(PATH_EXECUTE) / update_name;
-    	SPDLOG_INFO("from = {}",update_path.string());
+	{
+		fs::path exe_path = fs::path(PATH_EXECUTE) / update_name;
+		SPDLOG_INFO("from = {}",update_path.string());
 		SPDLOG_INFO("to = {}",exe_path.string());
-    	fs::copy_file( update_path, exe_path,
-                 fs::copy_options::overwrite_existing);
-        SPDLOG_INFO("コピー  END");	
-    /*
+		fs::copy_file( update_path, exe_path,
+		fs::copy_options::overwrite_existing);
+		SPDLOG_INFO("コピー  END");	
+		/*
 		strcpy( exe_path, PATH_EXECUTE );
 		strcat( exe_path, update_name );
 		SPDLOG_INFO("from = {}",update_path);
 		SPDLOG_INFO("to = {}",exe_path);
 		fs::copy_file( update_path, exe_path);
-	*/
+		*/
 	}
 	catch (const fs::filesystem_error& e)
 	{
-	    std::cerr << "コピーに失敗: " << e.what() << '\n';
-        return false;
+		std::cerr << "コピーに失敗: " << e.what() << '\n';
+		return false;
 	}
 	SPDLOG_INFO("コピー  OK");	
 	
@@ -409,17 +459,14 @@ bool update()
 		led_board_green->write_value(true);
 		led_board_red->write_value(true);
 		led_board_yel->write_value(true);
-		sleep(1);
 		led_board_green->write_value(false);
 		led_board_red->write_value(false);
 		led_board_yel->write_value(false);
-		sleep(1);
 	}
 	
 	SPDLOG_INFO("update() true");
 	return true;
 }
-
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
@@ -427,10 +474,10 @@ int main(int argc, char **argv)
 {
 	//--- init
 	//
-
-    spdlog::set_level(spdlog::level::debug);
-    SPDLOG_INFO("main-update");
-
+	
+	spdlog::set_level(spdlog::level::debug);
+	SPDLOG_INFO("main-update");
+	
 	std::shared_ptr<nvr::gpio_out> led_board_green = std::make_shared<nvr::gpio_out>("193", "P9_1");
 	std::shared_ptr<nvr::gpio_out> led_board_red = std::make_shared<nvr::gpio_out>("200", "P10_0");
 	std::shared_ptr<nvr::gpio_out> led_board_yel = std::make_shared<nvr::gpio_out>("192", "P9_0");
@@ -460,45 +507,55 @@ int main(int argc, char **argv)
 	
 	//--- timer start
 	//
-    timer1_id = g_timeout_add_full(
-        G_PRIORITY_HIGH,
-        1000,
-        G_SOURCE_FUNC(timer1_cb),
-        nullptr,
-        nullptr);
-    if (!timer1_id)
-    {
-        SPDLOG_ERROR("Failed to add timer1.");
-        exit(-1);
-    }
-
-    GMainLoop *main_loop = g_main_loop_new(NULL, FALSE);
-
-    //debug
-    signal_int_id  = g_unix_signal_add(SIGINT, G_SOURCE_FUNC(signal_intr_cb), main_loop);
-    signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), main_loop);
+	timer1_id = g_timeout_add_full(G_PRIORITY_HIGH,				// 優先度
+									1000,						// タイマー周期 1000msec
+									G_SOURCE_FUNC(timer1_cb),	//
+									nullptr,					// 
+									nullptr);					// 
+	if (!timer1_id)
+	{
+		SPDLOG_ERROR("Failed to add timer1.");
+		exit(-1);
+	}
+	
+	
+	//---メインループ 作成
+	//
+	GMainLoop *main_loop = g_main_loop_new(NULL, FALSE);
+	
+	
+	//---console input enable(メインループをコンソールからkillするため)
     //
-
-    g_main_loop_run(main_loop);
-    
-    int status;
-    if(pid){
-        kill(pid, SIGTERM);
-        waitpid(pid, &status, 0);
-        SPDLOG_INFO("nvr kill");
-    }
-
-    if (signal_int_id)
-    {
-        g_source_remove(signal_int_id);
-    }
-    if (signal_term_id)
-    {
-        g_source_remove(signal_term_id);
-    }
-    
-    std::exit(0);
-
+	signal_int_id  = g_unix_signal_add(SIGINT, G_SOURCE_FUNC(signal_intr_cb), main_loop);
+	signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), main_loop);
+	
+	
+	//---メインループ 実行
+	//
+	g_main_loop_run(main_loop);
+	
+	
+	//---プロセス 終了処理
+    //
+	int status;
+	if(pid)
+	{
+		kill(pid, SIGTERM);
+		waitpid(pid, &status, 0);
+		SPDLOG_INFO("nvr kill");
+	}
+	
+	if (signal_int_id)
+	{
+		g_source_remove(signal_int_id);
+	}
+	if (signal_term_id)
+	{
+		g_source_remove(signal_term_id);
+	}
+	
+	std::exit(0);
+	
 }
 
 /***********************************************************
