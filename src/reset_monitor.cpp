@@ -32,7 +32,6 @@ namespace nvr {
                 done_.store(false, std::memory_order_relaxed);
                 ret = 2;
             }
-            led_manager_->clear_status(led_manager::state_resetting);
             count_ = 0;
         } else {
             if (changed && value_ == 1) {
@@ -41,7 +40,6 @@ namespace nvr {
                 state_ = 0;
             } else if (state_ == 1 && value_ == 0 && count_ == 60) { // reset after 3sec.
                 logger_->write("L リセットボタン ON");
-                led_manager_->set_status(led_manager::state_resetting);
                 state_ = 0;
             }             
         }

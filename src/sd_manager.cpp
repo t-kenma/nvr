@@ -74,7 +74,6 @@ namespace nvr {
             }
         }
 
-        led_manager_->set_status(led_manager::state_sd_formatting);
         SPDLOG_DEBUG("Start mkfs.vfat");
         pid = fork();
         if (pid == 0) {
@@ -84,10 +83,6 @@ namespace nvr {
             SPDLOG_ERROR("Failed to fork format process: {}", strerror(errno));
             logger_->write("E SDカードフォーマットエラー");
             result = format_result_error;
-            led_manager_->set_and_clear_status(
-                led_manager::state_error_sd_format,
-                led_manager::state_sd_formatting
-            );
             goto END;
         }
 
@@ -96,10 +91,6 @@ namespace nvr {
         if (!WIFEXITED(status)) {
             SPDLOG_ERROR("mkfs is not exited.");
             logger_->write("E SDカードフォーマットエラー");
-            led_manager_->set_and_clear_status(
-                led_manager::state_error_sd_format,
-                led_manager::state_sd_formatting
-            );
             result = format_result_error;
             goto END;
         }
@@ -109,24 +100,15 @@ namespace nvr {
         if (rc != 0) {
             SPDLOG_ERROR("mkfs exit code: {}", rc);
             logger_->write("E SDカードフォーマットエラー");
-            led_manager_->set_and_clear_status(
-                led_manager::state_error_sd_format,
-                led_manager::state_sd_formatting
-            );
             result = format_result_error;
             goto END;
         }
-
-        led_manager_->clear_status(
-            led_manager::state_sd_formatting | led_manager::state_error_sd_format
-        );
 
         rc = mount_sd();
         if (rc) {
             SPDLOG_ERROR("Failed to mount sd: {}", strerror(errno));
             logger_->write("E SDカードイニシャライズエラー");
             result = format_result_error;
-            led_manager_->set_status(led_manager::state_error_sd_init);
             goto END;
         }
 
@@ -135,7 +117,6 @@ namespace nvr {
             if (rc) {
                 logger_->write("E SDカードイニシャライズエラー");
                 result = format_result_error;
-                led_manager_->set_status(led_manager::state_error_sd_init);
                 goto END;
             }
         }
@@ -143,7 +124,6 @@ namespace nvr {
         sync();
 
         result = format_result_success;
-        led_manager_->clear_status(led_manager::state_error_sd_init | led_manager::state_error_sd_format);
     END:
         format_result_.store(result);
         SPDLOG_DEBUG("<<< format_process {} {}", tid.str(), result);
@@ -208,11 +188,9 @@ namespace nvr {
         if (status == mount_state_not_mounted) {
             // SPDLOG_DEBUG("timer_process not_mounted");
             SPDLOG_INFO("state_sd_waiting");
-            led_manager_->set_status(led_manager::state_sd_waiting);
             if (check_proc_mounts() && is_root_file_exists()) {
                 SPDLOG_INFO("mount_state_mounted");
                 set_mount_status(mount_state_mounted);
-                led_manager_->clear_status(led_manager::state_sd_all);
             } else if (is_device_file_exists()) {
             	SPDLOG_INFO("mount_state_mounting");
                 set_mount_status(mount_state_mounting);
@@ -228,7 +206,6 @@ namespace nvr {
                 if (result == format_result_success) {
                     SPDLOG_INFO("Set mount_status_t to mounted");
                     set_mount_status(mount_state_mounted);
-                    led_manager_->clear_status(led_manager::state_sd_all);
                     return;
                 }
                 SPDLOG_INFO("Set mount_status_t to not_mounted");
@@ -253,7 +230,6 @@ namespace nvr {
             {
                 if (line.find(dev_file) != std::string::npos)
                 {
-                    // led_manager_->clear_status(led_manager::state_sd_waiting);
                     return true;
                 }
             }
@@ -262,8 +238,7 @@ namespace nvr {
         {
             SPDLOG_ERROR("Failed to check mout point: {}.", ex.what());
         }
-
-        // led_manager_->set_status(led_manager::state_sd_waiting);
+        
         return false;
     }
 
@@ -471,5 +446,7 @@ namespace nvr {
         sync();
     }
 }
+
+
 
 

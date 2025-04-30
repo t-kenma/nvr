@@ -168,6 +168,20 @@ namespace nvr {
         return ret;
     }
 
+    int gpio_in::open_with_edge()
+    {
+        int ret = open_port("in", "falling");
+        if (ret) {
+            return ret;
+        }
+
+        fd_ = ::open(value_path_.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+        if (fd_ == -1) {
+            return -1;
+        }
+        return ret;
+    }
+
     GIOStatus gpio_in::read_value(guchar *value)
     {
         GIOStatus ret = G_IO_STATUS_AGAIN;
@@ -198,6 +212,7 @@ namespace nvr {
         return ret;
     }
 
+    /*
     guint gpio_monitor::add_watch(GIOFunc func, gpointer user_data)
     {
         int ret = 0;
@@ -229,18 +244,7 @@ namespace nvr {
         }
         return update_state::error;
     }
-
-    int power_monitor::open()
-    {
-        int ret = open_port("in", "falling");
-        if (ret) {
-            return ret;
-        }
-
-        fd_ = ::open(value_path_.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-        if (fd_ == -1) {
-            return -1;
-        }
-        return ret;
-    }
+    */
 }
+
+

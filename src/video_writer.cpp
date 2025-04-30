@@ -351,22 +351,22 @@ namespace nvr
         if (dir.empty())
         {
             logger_->write("E SDカード保存エラー");
-            led_manager_->set_status(led_manager::state_error_sd_dir);
+            //led_manager_->set_red_type(nvr::led_manager::r_blink);
             return;
         } else {
-            led_manager_->clear_status(led_manager::state_error_sd_dir);
+            //led_manager_->clear_status(led_manager::state_error_sd_dir);
         }
 
         const auto dst = dir / file.filename();
         if (copy_file(file, dst))
         {
             SPDLOG_DEBUG("{} is copied to {}", file.c_str(), dst.c_str());
-            led_manager_->clear_status(led_manager::state_error_sd_file);
+            //led_manager_->clear_status(led_manager::state_error_sd_file);
         }
         else
         {
             logger_->write("E SDカード保存エラー");
-            led_manager_->set_status(led_manager::state_error_sd_file);
+            //led_manager_->set_red_type(nvr::led_manager::r_blink);
             return;
         }
 
@@ -436,3 +436,4 @@ namespace nvr
         SPDLOG_DEBUG("video writer finished.");
     }
 }
+

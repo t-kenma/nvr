@@ -27,20 +27,17 @@ namespace nvr {
             const char *root_file,
             const char *update_file,
             const char *nvr_file,
-            std::shared_ptr<led_manager> led_manager,
             std::shared_ptr<logger> logger
         ) noexcept : device_file_(device_file),
               mount_point_(mount_point),
               root_file_(root_file),
               update_file_(update_file),
               nvr_file_(nvr_file),
-              led_manager_(led_manager),
               logger_(logger),
               format_result_(0),
               mount_status_(0),
               counter_(0)
         {
-            led_manager_->set_status(led_manager::state_sd_waiting);
         }
 
         sd_manager() = delete;
@@ -102,7 +99,6 @@ namespace nvr {
         const std::filesystem::path update_file_;
         const std::filesystem::path nvr_file_;
         std::thread thread_;
-        std::shared_ptr<led_manager> led_manager_;
         std::atomic<int>  format_result_;
         std::atomic<int>  update_result_;
         std::atomic<int> mount_status_;
@@ -112,4 +108,5 @@ namespace nvr {
 }
 
 #endif
+
 

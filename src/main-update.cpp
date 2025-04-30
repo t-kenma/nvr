@@ -73,7 +73,7 @@ static gboolean signal_intr_cb(gpointer udata)
 	//
 	SPDLOG_INFO("SIGINTR receiverd.");
 	GMainLoop *loop = (GMainLoop *)udata;
-	g_main_loop_quit(loop);
+	//g_main_loop_quit(loop);
 	return G_SOURCE_REMOVE;
 }
 
@@ -85,7 +85,7 @@ static gboolean signal_term_cb(gpointer udata)
 	//
 	SPDLOG_INFO("SIGTERM receiverd.");
 	GMainLoop *loop = (GMainLoop *)udata;
-	g_main_loop_quit(loop);
+	//g_main_loop_quit(loop);
 	return G_SOURCE_REMOVE;
 }
 
@@ -321,6 +321,7 @@ bool execute()
 		exit(-1);
 	}
 	
+	SPDLOG_INFO("execute  success");	
 	return true;
 }
 
@@ -539,6 +540,7 @@ int main(int argc, char **argv)
 	
 	//---プロセス 終了処理
     //
+    SPDLOG_INFO("main-update die");
 	int status;
 	if(pid)
 	{

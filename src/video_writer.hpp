@@ -52,10 +52,6 @@ namespace nvr
             cv_.notify_one(); 
         }
 
-        inline void set_led_manager(std::shared_ptr<led_manager> led_manager) {
-            led_manager_ = led_manager;
-        }
-
         inline void set_sd_manager(std::shared_ptr<sd_manager> sd_manager) {
             sd_manager_ = sd_manager;
         }
@@ -93,7 +89,6 @@ namespace nvr
         bool active_;
         std::mutex mtx_;
         std::condition_variable cv_;
-        std::shared_ptr<led_manager> led_manager_;
         std::shared_ptr<sd_manager> sd_manager_;
         std::atomic<bool> power_down_;
         std::atomic<bool> writing_;
@@ -103,3 +98,4 @@ namespace nvr
 }
 
 #endif
+

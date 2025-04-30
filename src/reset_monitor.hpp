@@ -24,9 +24,6 @@ namespace nvr {
 
         int update_value();
 
-        inline void set_led_manager(std::shared_ptr<led_manager> led_manager) {
-            led_manager_ = led_manager;
-        }
 
         inline void set_logger(std::shared_ptr<logger> logger) {
             logger_ = logger;
@@ -36,7 +33,6 @@ namespace nvr {
         guchar value_;
         guint count_;
         guchar state_;
-        std::shared_ptr<led_manager> led_manager_;
         std::thread thread_;
         std::atomic<bool> done_;
         std::shared_ptr<logger> logger_;

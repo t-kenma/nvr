@@ -61,13 +61,15 @@ namespace nvr
     public:
         explicit gpio_in(const char *port_number, const char *port_name) noexcept
             : gpio_base(port_number, port_name),
-              channel_(nullptr)
+              channel_(nullptr),
+              fd_(-1)
         {}
         gpio_in() = delete;
         gpio_in(const gpio_in &) = delete;
         gpio_in(gpio_in &&) = delete;
 
         int open(const char *edge = nullptr);
+        int open_with_edge();
         GIOStatus read_value(guchar *v);
 
         virtual ~gpio_in()
@@ -79,10 +81,17 @@ namespace nvr
             }
         }
 
+        constexpr int fd() const {
+            return fd_;
+        }
+    private:
+        int fd_;
+
     protected:
         GIOChannel* channel_;
     };
 
+    /*
     class gpio_monitor: public gpio_in
     {
     public:
@@ -110,170 +119,11 @@ namespace nvr
         guchar value_; 
     };
 
-    class led_manager
-    {
-    public:
-        static const int state_none;
-        static const int state_error_sd_init;
-        static const int state_error_sd_format;
-        static const int state_error_sd_dir;
-        static const int state_error_sd_file;
-        static const int state_error_video;
-        static const int state_error_other;
-        static const int state_error;
-        static const int state_recording;
-        static const int state_sd_waiting;
-        static const int state_sd_formatting;
-        static const int state_box_open;
-        static const int state_station_associated;
-        static const int state_wifi_active;
-        static const int state_resetting;
-        static const int state_sd_all;
-        
-        explicit led_manager(
-            std::shared_ptr<gpio_out> green,
-            std::shared_ptr<gpio_out> red,
-            std::shared_ptr<gpio_out> alarm_a,
-            std::shared_ptr<gpio_out> alarm_b
-        ) noexcept
-        : green_(green),
-          red_(red),
-          alarm_a_(alarm_a),
-          alarm_b_(alarm_b),
-          status_(0),
-          prev_status_(0),
-          counter_(0),
-          alarm_state_(false)
-        {}
-        led_manager() = delete;
-        led_manager(const led_manager &) = delete;
-        led_manager(led_manager &&) = delete;
-        ~led_manager() = default;
-
-        inline int get_status()
-        {
-            return status_.load();
-        }
-
-        // inline bool is_sd_waiting() { return get_status() & state_sd_waiting;  }
-        // inline bool is_sd_formatting() { return get_status() & state_sd_formatting; }
-        // inline bool is_box_open() { return get_status() & state_box_open; }
-        // inline bool is_recording() { return get_status() & state_recording; }
-        // inline bool is_error() { return get_status() & state_error; }
-
-        inline bool is_sd_waiting() const { return status_.load() & state_sd_waiting;  }
-        inline bool is_sd_formatting() const { return status_.load() & state_sd_formatting; }
-        inline bool is_box_open() const { return status_.load() & state_box_open; }
-        inline bool is_recording() const { return status_.load() & state_recording; }
-        inline bool is_error() const { return status_.load() & state_error; }
-
-
-        void update_led();
-
-        inline bool is_set(int s) { return status_.load() & s; }
-
-        inline void set_status(int status)
-        {
-            int old_value = status_.load();
-            int new_value;
-            do {
-                new_value = old_value | status;
-                if (old_value != new_value) {
-                    SPDLOG_DEBUG("set status to {} -> {}", old_value, new_value);
-                }
-            } while(!status_.compare_exchange_weak(old_value, new_value));
-        }
-
-        inline void set_and_clear_status(int set, int clr)
-        {
-            int old_value = status_.load();
-            int new_value;
-            do {
-                new_value = (old_value | set) & ~clr;
-                if (old_value != new_value) {
-                    SPDLOG_DEBUG("set status to {} -> {}", old_value, new_value);
-                }
-            } while(!status_.compare_exchange_weak(old_value, new_value));
-        }
-
-        inline void clear_status(int status)
-        {
-            int old_value = status_.load();
-            int new_value;
-            do {
-                new_value = old_value & ~status;
-                if (old_value != new_value) {
-                    SPDLOG_DEBUG("set status to {} -> {}", old_value, new_value);
-                }
-            } while(!status_.compare_exchange_weak(old_value, new_value));
-        }
-
-        inline void set_red_board(std::shared_ptr<gpio_out> port) {
-            red_board_ = port;
-        }
-
-        inline void set_green_board(std::shared_ptr<gpio_out> port) {
-            green_board_ = port;
-        }
-
-    private:
-        inline void set_green(bool v) { 
-            green_->write_value(v);
-            if (green_board_) {
-                green_board_->write_value(!v);
-            }
-        }
-        inline void set_red(bool v) { 
-            red_->write_value(v);
-            if (red_board_) {
-                red_board_->write_value(!v);
-            }
-        }
-
-        inline void set_alarm(bool v) {
-            if (alarm_state_ != v) {
-                alarm_state_ = v;
-                alarm_a_->write_value(!v);
-                alarm_b_->write_value(true);
-                alarm_b_->write_value(false);
-            }
-        }
-
-        void update_status();
-
-        std::atomic<int> status_;
-        int prev_status_;
-
-        int counter_;
-        std::shared_ptr<gpio_out> green_;
-        std::shared_ptr<gpio_out> red_;
-        std::shared_ptr<gpio_out> green_board_;
-        std::shared_ptr<gpio_out> red_board_;
-
-        std::shared_ptr<gpio_out> alarm_a_;
-        std::shared_ptr<gpio_out> alarm_b_;
-
-        bool alarm_state_;
-    };
+    */
     
-    class power_monitor: public gpio_base
-    {
-    public:
-        explicit power_monitor(const char *port_number, const char *port_name) noexcept
-            : gpio_base(port_number, port_name),
-              fd_(-1)
-        {}
-        power_monitor() = delete;
-        power_monitor(const power_monitor &) = delete;
-        power_monitor(power_monitor &&) = delete;
-
-        int open();
-
-        constexpr int fd() const {
-            return fd_;
-        }
-    private:
-        int fd_;
-    };
 }
 #endif
+
+
+
+

@@ -1,146 +1,180 @@
 #include "gpio.hpp"
 #include "logging.hpp"
+#include "led_manager.hpp"
+namespace nvr 
+{
 
-namespace nvr {
-    const int led_manager::state_none = 0;
-    const int led_manager::state_error_sd_init = 1;
-    const int led_manager::state_error_sd_format = (1 << 1);
-    const int led_manager::state_error_sd_dir = (1 << 2);
-    const int led_manager::state_error_sd_file = (1 << 3);
-    const int led_manager::state_error_video = (1 << 4);
-    const int led_manager::state_error_other = (1 << 5);
-    const int led_manager::state_error = led_manager::state_error_sd_init
-        | led_manager::state_error_sd_format
-        | led_manager::state_error_sd_dir
-        | led_manager::state_error_sd_file
-        | led_manager::state_error_video
-        | led_manager::state_error_other;
-    const int led_manager::state_recording = (1 << 6);
-    const int led_manager::state_sd_waiting = (1 << 7);
-    const int led_manager::state_sd_formatting = (1 << 8);
-    const int led_manager::state_box_open = (1 << 9);
-    const int led_manager::state_resetting = (1 << 10);
-    const int led_manager::state_station_associated = (1 << 11);
-    const int led_manager::state_wifi_active = (1 << 12);
-    const int led_manager::state_sd_all = led_manager::state_error_sd_init
-        | led_manager::state_error_sd_format
-        | led_manager::state_error_sd_dir
-        | led_manager::state_error_sd_file
-        | led_manager::state_sd_waiting
-        | led_manager::state_sd_formatting;
+    const int led_manager::off      = 0;
+    const int led_manager::on       = 1;
+    const int led_manager::blink    = 2;
+    const int led_manager::one      = 3;
+    const int led_manager::two      = 4;
 
+    led_manager::led_manager() noexcept
+    : g_type_(off),
+      r_type_(off),
+      g_counter_(0),
+      r_counter_(0)
+    {
+        init();
+    }
+            
+/***********************************************************
+***********************************************************/
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+    void led_manager::init()
+    {
+       	grn_ = std::make_shared<nvr::gpio_out>("193", "P9_1");
+		yel_ = std::make_shared<nvr::gpio_out>("192", "P9_0");
+		red_ = std::make_shared<nvr::gpio_out>("200", "P10_0");
+        
+        
+        //---LED初期化
+        //
+        if (grn_->open(true)) {
+            SPDLOG_ERROR("Failed to open grn_.");
+            exit(-1);
+        }
+        
+        if (yel_->open(true)) {
+            SPDLOG_ERROR("Failed to open yel_.");
+            exit(-1);
+        }
+        
+        if (red_->open(true)) {
+            SPDLOG_ERROR("Failed to open red_.");
+            exit(-1);
+        }
+    }
+
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
     void led_manager::update_led()
     {
-        int status = get_status();
-        if (prev_status_ != status) {
-            SPDLOG_DEBUG("led_manager status changed: {} -> {}", prev_status_, status);
-            prev_status_ = status;
-            counter_ = 0;
+        //SPDLOG_INFO("g_counter_{}", g_counter_);
+        //SPDLOG_INFO("r_counter_{}", r_counter_);
+        //SPDLOG_INFO("g_type_{}", g_type_);
+        //SPDLOG_INFO("r_type_{}", r_type_);
+        SPDLOG_INFO("update_led");
 
-            if (status & state_error) {
-                set_alarm(true);
-            } else {
-                set_alarm(false);
-            }
-
-            set_red(false);
-            set_green(false);
-        }
-
-        if (status & state_resetting) {
-            if (counter_ == 0 || counter_ == 6 || counter_ == 12 || counter_ == 18) {
-                set_red(true);
-            } else if (counter_ == 3 || counter_ == 9 || counter_ == 15 || counter_ == 21) {
-                set_red(false);
-            }
-            if (counter_ == 40) {
-                counter_ = 0;
-            } else {
-                counter_++;
-            }
-            return;
-        }
-
-        if (status & state_sd_formatting) {
-            if (counter_ == 0 || counter_ == 6) {
-                set_red(true);
-            } else if (counter_ == 3 || counter_ == 9) {
-                set_red(false);
-            }
-            if (counter_ == 28) {
-                counter_ = 0;
-            } else {
-                counter_++;
-            }
-            return;
-        }
-
-        if (status & state_sd_waiting) {
-            if (counter_ == 0) {
-                set_red(true);
-            } else if (counter_ == 3) {
-                set_red(false);
-            }
-            if (counter_ == 22) {
-                counter_ = 0;
-            } else {
-                counter_++;
-            }
-            return;
-        }
-
-        if (status & state_box_open || status & state_station_associated) {
-            if (counter_ == 0) {
-                set_red(true);
-                set_green(true);
-            } else if (counter_ == 10) {
-                set_red(false);
-                set_green(false);
-            }
-            if (counter_ == 19) {
-                counter_ = 0;
-            } else {
-                counter_++;
-            }
-            return;
-        }
-
-        if (status & state_wifi_active) {
-            if (counter_ == 0 || counter_ == 6) {
-                set_green(true);
-            } else if (counter_ == 3 || counter_ == 9) {
-                set_green(false);
-            }
-            if (counter_ == 28) {
-                counter_ = 0;
-            } else {
-                counter_++;
-            }
-            return;
-        }
-
-        if (status & state_error) {
-            set_red(true);
-            return;
-        }
-
-        if (status & state_recording) {
-            if (counter_ == 0) {
-                set_green(true);
-            } else if (counter_ == 20) {
-                set_green(false);
-            }
-
-            if (counter_ == 28) {
-                counter_ = 0;
-            } else {
-                counter_++;
-            }
-            return;
-        }
-
-        if (counter_ == 0) {
+        if(g_type_ == off)
+        {
+            //---消灯
+            //
             set_green(true);
+            g_counter_ = 0;
+        }
+        else
+        if(g_type_ == on)
+        {
+            //---点灯
+            //
+            set_green(false);
+            g_counter_ = 0;
+        }
+        else
+        if(g_type_ == blink)
+        {
+            //---点滅
+            //
+            if( g_counter_ >= 0 && g_counter_ < 10 )
+            {
+                set_green(false);
+            }
+            else
+            if( g_counter_ >= 10 && g_counter_ < 20 )
+            {
+                set_green(true);
+            }
+            
+            g_counter_++;
+            if( g_counter_ >= 20)
+            {
+                g_counter_ = 0;
+            }
+        }
+        else
+        if(g_type_ == one)
+        {
+            //---1回点滅
+            //
+            if( g_counter_ >= 0 && g_counter_ < 2 )
+            {
+                set_green(false);
+            }
+            else
+            if( g_counter_ >= 2 && g_counter_ < 12 )
+            {
+                set_green(true);
+            }
+            
+            g_counter_++;
+            if( g_counter_ >= 12)
+            {
+                g_counter_ = 0;
+            }
+        }
+        else
+        if( g_type_ == two)
+        {
+            //---2回点滅
+            //
+            if( g_counter_ >= 0 && g_counter_ < 2 )
+            {
+                set_green(false);
+            }
+            else
+            if( g_counter_ >= 2 && g_counter_ < 4 )
+            {
+                set_green(true);
+            }
+            if( g_counter_ >= 4 && g_counter_ < 6 )
+            {
+                set_green(false);
+            }
+            if( g_counter_ >= 6 && g_counter_ < 16 )
+            {
+                set_green(true);
+            }
+            
+            g_counter_++;
+            if( g_counter_ >= 16)
+            {
+                g_counter_ = 0;
+            }
+        }
+        
+        if( r_type_ == off)
+        {
+            //---消灯
+            //
+            set_red(true);
+            r_counter_ = 0;
+        }
+        else
+        if(r_type_ == blink)
+        {
+            //---点滅
+            //
+            if( r_counter_ >= 0 && r_counter_ < 10 )
+            {
+                set_red(false);
+            }
+            else
+            if( r_counter_ >= 10 && r_counter_ < 20 )
+            {
+                set_red(true);
+            }
+            
+            r_counter_++;
+            if( r_counter_ >= 20)
+            {
+                r_counter_ = 0;
+            }
         }
     }
 }
+
