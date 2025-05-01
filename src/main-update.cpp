@@ -36,7 +36,7 @@ nvr::gpio_out *led_board_yel;
 
 
 #define PATH_UPDATE		"/mnt/sd/bin/"
-#define PATH_EXECUTE	"/tmp/app_exe/"
+#define PATH_EXECUTE	"/var/tmp/app_exe/"
 #define BUCKUP_EXECUTE	"/usr/bin/nvr"
 
 
@@ -213,7 +213,7 @@ bool get_update_file( char* name )
 bool get_execute_file( char* name )
 {
 	SPDLOG_INFO("get_execute_file()");
-	const char *exe_dir = "/tmp/app_exe"; 
+	const char *exe_dir = "/var/tmp/app_exe"; 
 	fs::path path(exe_dir);
 	std::error_code ec;
 	
@@ -246,7 +246,7 @@ bool get_execute_file( char* name )
 bool execute()
 {
 	SPDLOG_INFO("execute()");
-	const char *exe_dir = "/tmp/app_exe"; 
+	const char *exe_dir = "/var/tmp/app_exe"; 
 	fs::path path(exe_dir);
 	std::error_code ec;
 	
@@ -385,7 +385,7 @@ bool update()
 	//
 	SPDLOG_INFO("update_name = {}",update_name);
 	SPDLOG_INFO("execute_name = {}",execute_name);
-	if( update_name == execute_name ){
+	if( strcmp(update_name, execute_name) == 0){
 		SPDLOG_INFO("update_name == execute_name");
 		return false;
 	}
