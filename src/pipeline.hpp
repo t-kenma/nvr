@@ -25,7 +25,7 @@ namespace nvr
         gboolean setup(GstBin *pipeline);
         virtual void reset();
     protected:
-        virtual element make_src_element(GstBin *pipeline) = 0;
+    	virtual element make_src_element(GstBin *pipeline) = 0;
         virtual gboolean link_src_element(const element& src, const element& sink);
 
     private:
@@ -41,52 +41,12 @@ namespace nvr
         v4l2_src() = delete;
         v4l2_src(const v4l2_src&) = delete;
         v4l2_src(v4l2_src&&) = delete;
-
-    protected:
-        virtual element make_src_element(GstBin *pipeline) override;
-    };
-
-    class rtsp_src : public video_src
-    {
-    public:
-        explicit rtsp_src(
-            const std::string &url,
-            const std::string &user_id,
-            const std::string &password,
-            int width, int height)
-            : video_src(width, height),
-              url_(url),
-              user_id_(user_id),
-              password_(password),
-              rtsp_src_(),
-              decode_bin_(),
-              video_convert_(),
-              rtsp_src_pad_added_handler_(0),
-              decode_bin_pad_added_handler_(0)
-        {}
-        rtsp_src() = delete;
-        rtsp_src(const rtsp_src &) = delete;
-        rtsp_src(rtsp_src &&) = delete;
-        virtual ~rtsp_src();
-
-        constexpr GstElement *src() const noexcept { return static_cast<GstElement*>(rtsp_src_); }
-        constexpr GstElement *decode_bin() const noexcept { return static_cast<GstElement*>(decode_bin_); }
-
-        virtual void reset() override;
-
     protected:
         virtual element make_src_element(GstBin *pipeline) override;
 
-    private:
-        std::string url_;
-        std::string user_id_;
-        std::string password_;
-        element rtsp_src_;
-        element decode_bin_;
-        element video_convert_;
-        gulong rtsp_src_pad_added_handler_;
-        gulong decode_bin_pad_added_handler_;
     };
+
+    
 
     class jpeg_sink
     {
@@ -98,47 +58,13 @@ namespace nvr
 
         gboolean setup(GstBin *pipeline);
         void reset();
-        GstPadLinkReturn link(GstPad *src);
+        gboolean link(GstElement *src);
 
     private:
         std::string location_;
         element queue_;
     };
-
-    class video_sink
-    {
-    public:
-        explicit video_sink(
-            const char *location_dir,
-            double framerate,
-            unsigned int bitrate
-        );
-        video_sink() = delete;
-        video_sink(const video_sink &) = delete;
-        video_sink(const video_sink &&) = delete;
-        ~video_sink();
-
-        gboolean setup(GstBin *pipeline);
-        void reset();
-
-        GstPadLinkReturn link(GstPad *src);
-        void split_video_file() const;
-
-        constexpr const std::filesystem::path &location_dir() const { return location_dir_; }
-
-    protected:
-        element make_encoder(GstBin *pipeline, const char *name);
-
-    private:
-        element queue_;
-        element video_sink_;
-        gulong format_location_full_handler_;
-        std::filesystem::path location_dir_;
-        gint framerate_n_;
-        gint framerate_d_;
-        double framerate_;
-        unsigned int bitrate_;
-    };
+    
 
     class pipeline
     {
@@ -153,7 +79,6 @@ namespace nvr
         bool start();
         bool stop();
 
-        gboolean setup();
         void reset();
 
         explicit operator GstBin* () const noexcept { return GST_BIN(pipeline_); }
@@ -164,19 +89,9 @@ namespace nvr
             video_src_ = std::unique_ptr<nvr::video_src>(video_src);
         }
 
-        inline void set_video_sink(nvr::video_sink* video_sink)
-        {
-            video_sink_ = std::unique_ptr<nvr::video_sink>(video_sink);
-        }
-
         inline void set_jpeg_sink(nvr::jpeg_sink* jpeg_sink)
         {
             jpeg_sink_ = std::unique_ptr<nvr::jpeg_sink>(jpeg_sink);
-        }
-
-        inline void split_video_file() const
-        {
-            video_sink_->split_video_file();
         }
 
         inline gboolean send_eos_event()
@@ -197,15 +112,10 @@ namespace nvr
         }
     private:
         gboolean link_src();
-        gboolean link_video_sink();
         gboolean link_jpeg_sink();
-
         std::unique_ptr<nvr::video_src> video_src_;
-        std::unique_ptr<nvr::video_sink> video_sink_;
         std::unique_ptr<nvr::jpeg_sink> jpeg_sink_;
-
         GstElement *pipeline_;
-        GstElement *tee_;
         GstPad *tee_video_pad_;
         GstPad *tee_jpeg_pad_;
 

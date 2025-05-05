@@ -24,14 +24,10 @@ namespace nvr {
         explicit sd_manager(
             const char *device_file,
             const char *mount_point,
-            const char *root_file,
-            const char *update_file,
             const char *nvr_file,
             std::shared_ptr<logger> logger
         ) noexcept : device_file_(device_file),
               mount_point_(mount_point),
-              root_file_(root_file),
-              update_file_(update_file),
               nvr_file_(nvr_file),
               logger_(logger),
               format_result_(0),
@@ -47,26 +43,25 @@ namespace nvr {
 
         void timer_process();
         bool check_mount_point();
+        bool is_sd_card();
+        bool is_root_file_exists() noexcept;
+        int start_format();
+        int is_formatting();
+        bool check_proc_mounts();
+        uint64_t get_sector_count();
+        int unmount_sd();
+        int mount_sd();
+        
 
         // int sync_dir(const std::filesystem::path& path);
     private:
-        int start_format();
-        int start_update();
         bool wait_format();
+        int start_update();
         bool wait_update();
         void format_process();
         void update_process();
 
-        int mount_sd();
-        int unmount_sd();
-
-        bool check_proc_mounts();
-        inline bool is_root_file_exists() noexcept
-        {
-            std::error_code ec;
-            return std::filesystem::exists(root_file_, ec);
-        }
-
+        
         inline bool is_device_file_exists() noexcept
         {
             std::error_code ec;
@@ -108,5 +103,8 @@ namespace nvr {
 }
 
 #endif
+
+
+
 
 

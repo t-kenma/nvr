@@ -54,12 +54,6 @@ namespace nvr
 ----------------------------------------------------------*/
     void led_manager::update_led()
     {
-        //SPDLOG_INFO("g_counter_{}", g_counter_);
-        //SPDLOG_INFO("r_counter_{}", r_counter_);
-        //SPDLOG_INFO("g_type_{}", g_type_);
-        //SPDLOG_INFO("r_type_{}", r_type_);
-        SPDLOG_INFO("update_led");
-
         if(g_type_ == off)
         {
             //---消灯
@@ -177,4 +171,5 @@ namespace nvr
         }
     }
 }
+
 

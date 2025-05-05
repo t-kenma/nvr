@@ -68,11 +68,8 @@ namespace nvr
         queue_.reset();
     }
 
-    GstPadLinkReturn jpeg_sink::link(GstPad *src)
+    gboolean jpeg_sink::link(GstElement *src)
     {
-        GstPad *sink = queue_.get_static_pad("sink");
-        GstPadLinkReturn result = gst_pad_link(src, sink);
-        gst_object_unref(sink);
-        return result;
+        return gst_element_link(src, static_cast<GstElement*>(queue_));
     }
 }

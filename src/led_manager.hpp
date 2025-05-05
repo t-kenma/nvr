@@ -24,12 +24,28 @@ namespace nvr {
         ~led_manager() = default;
     
         void update_led();    
-        void set_g(int v) {
-            SPDLOG_INFO("set_green_type {}", v);
+        void set_g(int v) 
+        {
             g_type_ = v;
         }
-        void set_r(int v) {
+
+        void set_r(int v) 
+        {
             r_type_ = v;
+        }
+
+        void set_y(int y) 
+        {
+            //yellowはアクセスランプ
+            //
+            if( y == 0 )
+            {
+                yel_->write_value(true);
+            }
+            else
+            {
+                yel_->write_value(false);
+            }
         }
     
     private:
@@ -42,15 +58,21 @@ namespace nvr {
         void set_red(bool v) {
             red_->write_value(v);
         }
+
+        void set_yel(bool v) {
+            yel_->write_value(v);
+        }
     
         int g_type_;
         int r_type_;
+        int y_type_;
         int g_counter_;
         int r_counter_;
-		std::shared_ptr<nvr::gpio_out> red_;
+ 		std::shared_ptr<nvr::gpio_out> red_;
 		std::shared_ptr<nvr::gpio_out> yel_;
 		std::shared_ptr<nvr::gpio_out> grn_;
 	
     };
 }
 #endif
+

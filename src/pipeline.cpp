@@ -4,10 +4,7 @@
 namespace nvr
 {
     pipeline::pipeline()
-        : tee_(nullptr),
-          tee_video_pad_(nullptr),
-          tee_jpeg_pad_(nullptr),
-          running_(false)
+          :running_(false)
     {
         pipeline_ = gst_pipeline_new("nrs-recorder-pipeline");
     }
@@ -25,25 +22,6 @@ namespace nvr
 
     void pipeline::reset()
     {
-        if (tee_video_pad_)
-        {
-            gst_element_release_request_pad(tee_, tee_video_pad_);
-            gst_object_unref(tee_video_pad_);
-            tee_video_pad_ = nullptr;
-        }
-
-        if (tee_jpeg_pad_)
-        {
-            gst_element_release_request_pad(tee_, tee_jpeg_pad_);
-            gst_object_unref(tee_jpeg_pad_);
-            tee_jpeg_pad_ = nullptr;
-        }
-
-        if (tee_) {
-            gst_object_unref(tee_);
-            tee_ = nullptr;
-        }
-
         if (pipeline_)
         {
             GstIterator *itr;
@@ -75,93 +53,22 @@ namespace nvr
         }
     }
 
-    gboolean pipeline::setup()
-    {
-        GstElement *tee = nullptr;
-
-        // pipeline_ = gst_pipeline_new("nrs-recorder-pipeline");
-        // if (!pipeline_) {
-        //     SPDLOG_ERROR("Failed to create pipeline.");
-        //     return FALSE;
-        // }
-
-        // gst_pipeline_set_auto_flush_bus(static_cast<GstPipeline*>(pipeline_), TRUE);
-
-        tee = gst_element_factory_make("tee", "tee");
-        if (!tee) {
-            SPDLOG_ERROR("Failed to make tee element.");
-            return FALSE;
-        }
-
-        gst_bin_add(GST_BIN(pipeline_), tee);
-        tee_ = static_cast<GstElement *>(g_object_ref(tee));
-
-#if GST_CHECK_VERSION(1,20,0)
-        tee_video_pad_ = gst_element_request_pad_simple(tee_, "src_%u");
-#else
-        tee_video_pad_ = gst_element_get_request_pad(tee_, "src_%u");
-#endif
-        if (!tee_video_pad_) {
-            SPDLOG_ERROR("Failed to request tee video src pad.");
-            return FALSE;
-        }
-    
-#if GST_CHECK_VERSION(1,20,0)
-        tee_jpeg_pad_ = gst_element_request_pad_simple(tee_, "src_%u");
-#else
-        tee_jpeg_pad_ = gst_element_get_request_pad(tee_, "src_%u");
-#endif
-        if (!tee_jpeg_pad_) {
-            SPDLOG_ERROR("Failed to request tee jpeg src pad.");
-            return FALSE;
-        }
-
-        return TRUE;
-    }
-
-    gboolean pipeline::link_src() {
-        return gst_element_link(video_src_->sink(), tee_);
-    }
-
-    gboolean pipeline::link_video_sink()
-    {
-        GstPadLinkReturn result = video_sink_->link(tee_video_pad_);
-        return (result == GST_PAD_LINK_OK) ? TRUE : FALSE;
-    }
 
     gboolean pipeline::link_jpeg_sink()
     {
-        GstPadLinkReturn result = jpeg_sink_->link(tee_jpeg_pad_);
-        return (result == GST_PAD_LINK_OK) ? TRUE : FALSE;
+        gboolean result = jpeg_sink_->link(video_src_->sink());
+        return (result) ? TRUE : FALSE;
     }
 
     bool pipeline::start()
     {
         GstStateChangeReturn result;
 
-        if (!setup()) {
-            return false;
-        }
-
         if (!video_src_->setup(GST_BIN(pipeline_))) {
             return false;
         }
 
-        if (!video_sink_->setup(GST_BIN(pipeline_))) {
-            return false;
-        }
-
         if (!jpeg_sink_->setup(GST_BIN(pipeline_))) {
-            return false;
-        }
-
-        if (!link_src()) {
-            SPDLOG_ERROR("Failed to link src.");
-            return false;
-        }
-
-        if (!link_video_sink()) {
-            SPDLOG_ERROR("Failed to link video sink.");
             return false;
         }
 
@@ -197,7 +104,6 @@ namespace nvr
             // running_.store(false, std::memory_order_relaxed);
 
             jpeg_sink_->reset();
-            video_sink_->reset();
             video_src_->reset();
             reset();
 

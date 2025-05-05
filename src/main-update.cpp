@@ -25,6 +25,8 @@
 
 
 namespace fs = std::filesystem;
+const std::filesystem::path inf1 = "/mnt/sd/REC_INF1.dat";
+const std::filesystem::path inf2 = "/mnt/sd/REC_INF2.dat";
 int g_mount_status = 0;
 guint signal_int_id;
 guint signal_term_id;
@@ -107,7 +109,6 @@ bool check_proc_mounts()
 		while (std::getline(ifs, line))
 		{
 			if (line.find(dev_file) != std::string::npos){
-				SPDLOG_INFO("check_proc_mounts true");
 				return true;
 			}
 		}
@@ -117,7 +118,6 @@ bool check_proc_mounts()
 		SPDLOG_ERROR("Failed to check mout point: {}.", ex.what());
 	}
 	
-	SPDLOG_INFO("check_proc_mounts false");
 	return false;
 }
 
@@ -125,24 +125,19 @@ bool check_proc_mounts()
 ----------------------------------------------------------*/
 inline bool is_root_file_exists() noexcept
 {
-	static const char *root_file_ = "/mnt/sd/.nrs_video_data";
 	std::error_code ec;
-	
-	
-	//---SDカードに.nrs_video_dataファイルがあるかの確認
-	//
-	try
-	{
-		std::filesystem::exists(root_file_, ec);	
-	}
-	catch (const fs::filesystem_error& e)
-	{
-		std::cerr << "失敗: " << e.what() << '\n';
+
+	if (!fs::exists(inf1, ec)) {
+		SPDLOG_INFO("no inf1");
 		return false;
 	}
-	
-	SPDLOG_INFO("is_root_file_exists true");
-	return std::filesystem::exists(root_file_, ec);
+
+	if (!fs::exists(inf2, ec)) {
+		SPDLOG_INFO("no inf2");
+		return false;
+	}
+
+	return true;
 }
 
 /*----------------------------------------------------------
@@ -150,12 +145,10 @@ inline bool is_root_file_exists() noexcept
 bool is_sd_card()
 {
 	if ( !check_proc_mounts() ){
-		SPDLOG_INFO("check_proc_mounts false");
 		return false;
 	}
 	
 	if( !is_root_file_exists() ) {
-		SPDLOG_INFO("is_root_file_exists false");
 		return false;
 	}
 	
@@ -280,7 +273,7 @@ bool execute()
 	
 	//---実行ファイル名の取得
 	//
-	char exe_name[256];
+	char exe_name[256] = {0};
 	if(!get_execute_file(exe_name)){
 		SPDLOG_INFO("get_execute_file false");
 		return false;
@@ -332,22 +325,21 @@ bool update()
 	//---SDカードの挿入確認
 	//
 	if( is_sd_card() == false ){
-		SPDLOG_INFO("is_sd_card() false");
+		//SPDLOG_INFO("is_sd_card() false");
 		return false;
 	}
 	
 	
 	//アップデータファイルの存在確認
 	//
-	char update_name[256];
+	char update_name[256]  = {0};
 	if( get_update_file( update_name ) == false ){
-		SPDLOG_INFO("get_update_file() false");
+		//SPDLOG_INFO("get_update_file() false");
 		return false;
 	}
 	
 	
-	//---実行ファイルの存在確認
-	//
+
 	/*
 	char update_path[256];
 	strcpy( update_path, PATH_UPDATE );
@@ -355,7 +347,10 @@ bool update()
 	*/
 	fs::path update_path = fs::path(PATH_UPDATE) / update_name;
 
-	char execute_name[256];
+
+	//---実行ファイルの存在確認
+	//
+	char execute_name[256]  = {0};
 	if( get_execute_file( execute_name ) == false )
 	{
 		SPDLOG_INFO("get_execute_file() false");
@@ -377,7 +372,9 @@ bool update()
 			return false;
 		}
 		
-		return true;
+		if( get_execute_file( execute_name ) == false ){
+			return false;
+		}
 	}
 	
 	
@@ -412,12 +409,6 @@ bool update()
 		fs::path del_path = fs::path(PATH_EXECUTE) / execute_name;
 		fs::remove( del_path );
 		SPDLOG_INFO("del execute = {}",del_path.string());
-		/*
-		strcpy( exe_path, PATH_EXECUTE );
-		strcat( exe_path, execute_name );
-		SPDLOG_INFO("del execute = {}",exe_path);
-		fs::remove( exe_path );
-		*/
 	}
 	catch (const fs::filesystem_error& e)
 	{
@@ -437,13 +428,6 @@ bool update()
 		fs::copy_file( update_path, exe_path,
 		fs::copy_options::overwrite_existing);
 		SPDLOG_INFO("コピー  END");	
-		/*
-		strcpy( exe_path, PATH_EXECUTE );
-		strcat( exe_path, update_name );
-		SPDLOG_INFO("from = {}",update_path);
-		SPDLOG_INFO("to = {}",exe_path);
-		fs::copy_file( update_path, exe_path);
-		*/
 	}
 	catch (const fs::filesystem_error& e)
 	{
@@ -565,5 +549,6 @@ int main(int argc, char **argv)
 /***********************************************************
 	end of file
 ***********************************************************/
+
 
 

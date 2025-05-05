@@ -17,32 +17,41 @@
 #include <iostream>
 #include "config.hpp"
 #include "pipeline.hpp"
-#include "video_writer.hpp"
+
 #include "gpio.hpp"
 #include "sd_manager.hpp"
 #include "led_manager.hpp"
 #include "util.hpp"
 #include "logging.hpp"
+
+#include <stdexcept>
+#include <linux/usb/raw_gadget.h>
+
+#include "usb_raw_gadget.hpp"
+#include "usb_raw_control_event.hpp"
+
+#include "usb_evc.hpp"
+#include "ring_buffer.hpp"
+#include <vector>
+#include <string>
+#include <fstream>
+
+
 #ifdef G_OS_UNIX
 #include <glib-unix.h>
 #endif
-#ifdef __APPLE__
-#include "avf_src.hpp"
-#endif
-
 
 /***********************************************************
 ***********************************************************/
 struct callback_data_t
 {
 	callback_data_t() : timer1_id(0),
-					    timer2_id(0),
 					    bus_watch_id(0),
 					    signal_int_id(0),
 					    signal_term_id(0),
 					    signal_user1_id(0),
 					    signal_user2_id(0),
-					    led_manager(nullptr),
+					    led(nullptr),
 					    sd_manager(nullptr),
 					    jpeg_file(nullptr),
 					    pipeline(nullptr),
@@ -56,8 +65,6 @@ struct callback_data_t
 	{}
 	
 	guint timer1_id;
-	guint timer2_id;
-	guint timer3_id;
 	guint bus_watch_id;
 	guint signal_int_id;
 	guint signal_term_id;
@@ -65,20 +72,15 @@ struct callback_data_t
 	guint signal_user2_id;
 	
 	std::shared_ptr<nvr::pipeline> pipeline;
-	std::shared_ptr<nvr::video_writer> video_writer;
-	std::shared_ptr<nvr::logger> logger;
-	nvr::led_manager *led_manager;
+	std::shared_ptr<nvr::logger> logger;	
+	nvr::led_manager *led;
 	nvr::sd_manager *sd_manager;
-	
-	nvr::gpio_out *rst_decoder;
+	nvr::gpio_in *gpio_stop_btn;
 	nvr::gpio_out *pwd_decoder;
 	nvr::gpio_out *gpio_alrm_a;
 	nvr::gpio_out *gpio_alrm_b;
-
 	nvr::gpio_in *gpio_battery;
 	nvr::gpio_in *pgood;
-	nvr::gpio_in *gpio_stop_btn;
-	
 	std::filesystem::path done_dir;
 	const char *jpeg_file;
 	
@@ -86,36 +88,46 @@ struct callback_data_t
 	std::atomic<std::time_t> jpeg_time;
 	bool is_video_error;
 	bool b_reboot;
-	bool rec_en;
 	std::atomic<bool> interrupted;
 	std::atomic<bool> is_power_pin_high;
+	int copy_interval;
+	bool low_battry;
 #ifdef NVR_DEBUG_POWER
 	nvr::gpio_out *tmp_out1;
 #endif
 	GMainLoop *main_loop;
 };
 
-
 namespace fs = std::filesystem;
 static const char *g_interrupt_name = "nrs-video-recorder-interrupted";
 static const char *g_quit_name = "nrs-video-recorder-quit";
 
-
-/***********************************************************
-***********************************************************/
-
-/*----------------------------------------------------------
-----------------------------------------------------------*/
+int flag = 0;
+std::thread *thread_bulk_in = nullptr;
+std::thread *thread_bulk_out = nullptr;
 
 
+ring_buffer<char> usb_tx_buffer(524288);
+std::atomic<bool> connected(false);
+
+constexpr size_t BUF_SIZE = 512;
 
 
+int count_btn_down = 0;
+int count_rec_off = 0;
+int count_sd_none = 0;
+
+int count_video_lost = 0;
+int count_video_found = 0;
+bool system_error = false;
+bool formatting = false;
 
 
-
-
-
-
+/*-------後で設定ファイルに持っていく-------*/
+int copy_interval = 100; 
+uint8_t count_err = 0;
+/*---------------------------------------*/
+uint64_t test_idx = 0;
 
 /***********************************************************
 ***********************************************************/
@@ -204,7 +216,6 @@ static void thread_gpio_power(callback_data_t *data)
 		
 		if (epoll_wait(epfd, &events, 1, 1000) > 0)
 		{
-			data->video_writer->set_powerdown();
 			::open("/dev/adv71800", O_RDONLY);
 			// ::open("/dev/adin0", O_RDONLY);
 			// ioctl(soc, SIOCSIFFLAGS, &ifr);
@@ -214,202 +225,547 @@ static void thread_gpio_power(callback_data_t *data)
 	}
 }
 
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+void addOrUpdateJPEGComment(const std::string& inputPath, const std::string& outputPath, const std::string& comment) {
+    std::ifstream inFile(inputPath, std::ios::binary);
+    if (!inFile) {
+        std::cerr << "Failed to open input file\n";
+        return;
+    }
 
-/***********************************************************
-***********************************************************/
+    std::vector<unsigned char> data((std::istreambuf_iterator<char>(inFile)), std::istreambuf_iterator<char>());
+    inFile.close();
+
+    //---JPEG開始マーカーを確認 (0xFFD8)
+	//
+    if (data.size() < 2 || data[0] != 0xFF || data[1] != 0xD8) {
+        std::cerr << "Not a valid JPEG file.\n";
+        return;
+    }
+
+    size_t pos = 2;
+    bool commentWritten = false;
+
+    //---新しいバッファに書き出す準備
+	//
+    std::vector<unsigned char> newData(data.begin(), data.begin() + 2); // SOIコピー
+
+    // セグメントを順に処理
+    while (pos + 4 < data.size() && data[pos] == 0xFF) {
+        unsigned char marker = data[pos + 1];
+
+        // EOIまたはSOSに達したら打ち切り
+        if (marker == 0xD9 || marker == 0xDA) {
+            break;
+        }
+
+        uint16_t length = (data[pos + 2] << 8) + data[pos + 3];
+        if (pos + 2 + length > data.size()) break;
+
+        // COMセグメントならスキップ（上書きのため）
+        if (marker == 0xFE) {
+            pos += 2 + length;  // スキップして書き込まない
+            continue;
+        }
+
+        // 他のセグメントはそのままコピー
+        newData.insert(newData.end(), data.begin() + pos, data.begin() + pos + 2 + length);
+        pos += 2 + length;
+    }
+
+    // COMセグメント追加
+    std::string cmt = comment;
+    uint16_t comLen = cmt.length() + 2; // 2バイトは長さフィールド
+    newData.push_back(0xFF);
+    newData.push_back(0xFE); // COMマーカー
+    newData.push_back((comLen >> 8) & 0xFF); // 長さ(上位)
+    newData.push_back(comLen & 0xFF);        // 長さ(下位)
+    newData.insert(newData.end(), cmt.begin(), cmt.end());
+
+    // 残り（画像データ）を追加
+    newData.insert(newData.end(), data.begin() + pos, data.end());
+
+    // 書き出し
+    std::ofstream outFile(outputPath, std::ios::binary);
+    outFile.write(reinterpret_cast<char*>(newData.data()), newData.size());
+    outFile.close();
+
+    std::cout << "Comment added or updated successfully.\n";
+}
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
-static gboolean callback_timer1(gpointer udata)
+/*
+int copy(char* file_path)
 {
-	callback_data_t *data = static_cast<callback_data_t *>(udata);
-	const char *exe_dir = "/mnt/sd/jpeg"; 
-	fs::path path(exe_dir);
-	std::time_t t = std::time(nullptr);
-	const std::tm *tm = std::localtime(&t);
-	std::time_t jpeg_time = data->jpeg_time.load(std::memory_order_relaxed);
-	static int cnt = 0;
+	int rc;
+	int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, S_IRWXU);
+	if (fd == -1) {
+		SPDLOG_ERROR("Failed to open {}: {}", path, strerror(errno));
+		return -1;
+	}
+
+
+
+	rc = write(fd, val, len);
+	if (rc < 0) {
+		SPDLOG_ERROR("Failed to write {}: {}", path, strerror(errno));
+		close(fd);
+		return -2;
+	}
+
+	close(fd);
+
+}
+*/
+
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+bool is_btn(callback_data_t *data)
+{
+	guchar value;
+	data->gpio_stop_btn->read_value(&value);
+	if (value == 1){
+		return false;
+	}
+
+	return true;
+}
+
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+int copy_jpeg( uint64_t file_idx )
+//int copy_jpeg(gpointer udata)
+{
+	const std::filesystem::path inf2 = "/mnt/sd/REC_INF2.dat";
+	std::filesystem::path save_path;
+	char num_dir1[256];
+	char num_dir2[256];
+	char num_dir3[256];
+	char num_file[256];
+	char s_dir1[256];
+	char s_dir2[256];
+	char s_dir3[256];
+	char s_file[256];
+	int d1;
+	int d2;
+	int d3;
+	int file;
+	fs::path dir1;
+	fs::path dir2;
+	fs::path dir3;
+
 	std::error_code ec;
 
-	//---SDカードの挿入状態確認
+	//---ファイルをリネームして確保
 	//
-	data->sd_manager->timer_process();
-
-
-	//---SDカードにjpegを現在時刻でコピー
-	if(cnt >=10)
+	if (std::rename("/tmp/video.jpg","/tmp/_video.jpg") == -1)
 	{
-		cnt = 0;
-		if(data->sd_manager->check_mount_point() && data->rec_en == true)
-		{
-			if (!fs::exists(path, ec))
-			{
-				//---ディレクトリがないので作成
-				//
-				if (!fs::create_directories(path, ec)) {
-					SPDLOG_ERROR("Failed to make directory: {}.", path.c_str());
-				}
-			}
-			
-			try 
-			{
-				path = path / g_strdup_printf( "%04d-%02d-%02d-%02d-%02d-%02d.jpeg",
-												tm->tm_year + 1900,
-												tm->tm_mon + 1,
-												tm->tm_mday,
-												tm->tm_hour,
-												tm->tm_min,
-												tm->tm_sec);
-				
-				fs::copy_file("/tmp/video.jpg", path, fs::copy_options::overwrite_existing);
-				
-				
-				/*
-				fs::copy_file("/tmp/video.jpg", path / g_strdup_printf(
-				"%04d-%02d-%02d-%02d-%02d-%02d.jpeg",
-				tm->tm_year + 1900,
-				tm->tm_mon + 1,
-				tm->tm_mday,
-				tm->tm_hour,
-				tm->tm_min,
-				tm->tm_sec), 
-				fs::copy_options::overwrite_existing);
-				*/
-				SPDLOG_INFO("jpeg save");
-			}
-			catch (const fs::filesystem_error& e) 
-			{
-				std::cerr << "画像コピー失敗: " << e.what() << '\n';
-			}
-			
-			try 
-			{
-			    int fd = ::open(path.c_str(), O_WRONLY);
-				if (fd != -1)
-				{
-					::fsync(fd);
-					::close(fd);
-				}
-			}
-			catch (const fs::filesystem_error& e) 
-			{
-				std::cerr << "sync失敗: " << e.what() << '\n';
-			}
-		}
+		SPDLOG_ERROR("Failed to rename {} to {}: {}", "/tmp/video.jpg",
+			"/tmp/_video.jpg", std::strerror(errno));
 	}
 	else
 	{
-		cnt++;
+		SPDLOG_DEBUG("Rename {} to {}", "/tmp/video.jpg",
+			"/tmp/_video.jpg");
 	}
-	
 
-	return G_SOURCE_CONTINUE;
+
+	SPDLOG_INFO("test_idx = {}",test_idx);
+	//保存先をファイルのidxから計算
+	//
+	/************debug************ */
+	int sd_extr = 0;
+	/***************************** */
+
+	if(sd_extr) //dir3
+	{
+		d1 = (file_idx / 1000000) % 100;   // 百万単位
+    	d2 = (file_idx / 10000) % 100;     // 万単位
+  		d3 = (file_idx / 100) % 100;       // 百単位
+   		file = file_idx % 100;
+
+
+		sprintf(num_dir1, "%02d", d1);
+		sprintf(num_dir2, "%02d", d2);
+		sprintf(num_dir3, "%02d", d3);
+
+		strcpy( s_dir1, "DIR1_" );
+		strcat( s_dir1, num_dir1);
+
+		strcpy( s_dir2, "DIR2_" );
+		strcat( s_dir2, num_dir2);
+
+		strcpy( s_dir3, "DIR3_" );
+		strcat( s_dir3, num_dir3);
+
+		dir1 = fs::path(s_dir1);
+		dir2 = fs::path(s_dir2);
+		dir3 = fs::path(s_dir3);
+
+		save_path = fs::path("/mnt/sd") / dir1 / dir2 / dir3 ;
+	}
+	else		//dir2
+	{
+    	d1 = (file_idx / 10000) % 100;     // 万単位
+  		d2 = (file_idx / 100) % 100;       // 百単位
+   		file = file_idx % 100;
+
+		sprintf(num_dir1, "%02d", d1);
+		sprintf(num_dir2, "%02d", d2);
+
+		strcpy( s_dir1, "DIR1_" );
+		strcat( s_dir1, num_dir1);
+
+		strcpy( s_dir2, "DIR2_" );
+		strcat( s_dir2, num_dir2);
+
+
+		dir1 = fs::path(s_dir1);
+		dir2 = fs::path(s_dir2);
+		save_path = fs::path("/mnt/sd") / dir1 / dir2;
+	}
+		
+
+	//---保存するディレクトリの存在確認
+	//
+	if (!fs::exists(save_path, ec))
+	{
+		//---ディレクトリがないので作成
+		//
+		if (!fs::create_directories(save_path, ec)) {
+			SPDLOG_ERROR("Failed to make directory: {}.", save_path.c_str());	
+		}
+		SPDLOG_INFO("MAKE JPEG dir");
+	}
+
+	//--- jpegヘッダーの更新
+	//
+	std::string inputJPEG = "input.jpg";
+    std::string outputJPEG = "output.jpg";
+    std::string newComment = "これはテストコメントです";
+
+    addOrUpdateJPEGComment("/tmp/_video.jpg", save_path.c_str(), newComment);
+
+	/*
+	//---ファイル保存
+	//
+	try 
+	{
+		save_path = save_path / g_strdup_printf( "JP%06lu.jpeg",file_idx);
+										
+		SPDLOG_INFO("path = {}",save_path.c_str());
+		
+		fs::copy_file("/tmp/_video.jpg", save_path, fs::copy_options::overwrite_existing);
+		SPDLOG_INFO("jpeg save");
+	}	
+	catch (const fs::filesystem_error& e) 
+	{
+		std::cerr << "画像コピー失敗: " << e.what() << '\n';
+	}
+	*/
+
+
+	//---ファイルの同期
+	//
+	try 
+	{
+		int fd = ::open(save_path.c_str(), O_WRONLY);
+		if (fd != -1)
+		{
+			::fsync(fd);
+			::close(fd);
+		}
+	}
+	catch (const fs::filesystem_error& e) 
+	{
+		std::cerr << "sync失敗: " << e.what() << '\n';
+	}
+
+	
+	//---inf2に対して書き込みファイル数を上書き
+	//
+	sprintf(num_file, "%lu", file_idx);
+	int len = strlen(num_file);
+	SPDLOG_INFO("inf2 ={}",num_file);
+    if( nvr::file_write(inf2.c_str(), num_file, len) != 0 ){
+		//---書き込みerr
+		//
+		SPDLOG_INFO("inf2書き込みerr");
+	}
+
+
+	//---ファイルの同期
+	//
+	try 
+	{
+		int fd = ::open(inf2.c_str(), O_WRONLY);
+		if (fd != -1)
+		{
+			::fsync(fd);
+			::close(fd);
+		}
+	}
+	catch (const fs::filesystem_error& e) 
+	{
+		std::cerr << "sync失敗: " << e.what() << '\n';
+	}
+
+	return true;
 }
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
-static gboolean callback_timer2(gpointer udata)
+static gboolean on_timer(gpointer udata)
 {
 	callback_data_t *data = static_cast<callback_data_t *>(udata);
-		
-	//---100ms timer
-	//
-	guchar value;
-	static int _cnt_btn = 0;
-	static int _cnt_stop = 0;
-	data->gpio_stop_btn->read_value(&value);
-	std::time_t t = std::time(nullptr);
-	const std::tm *tm = std::localtime(&t);
-	std::time_t jpeg_time = data->jpeg_time.load(std::memory_order_relaxed);
+	static int count_btn_down = 0;
+	static int count_rec_off = 0;
+	static int count_sd_none = 0;
+	static int count_copy_interval = 0;
+	
+	
+	SPDLOG_INFO("on_timer");
 
-
-	//一定時間でスプリットナウ
+	/*
+	//--- システムエラー状態
 	//
-	if (tm->tm_sec == 0)
+	if( system_error == true )
 	{
-		if (data->pipeline->is_running())
-		 {
-			data->pipeline->split_video_file();
-		}
+		led.set_r( BLINK );
+		led.set_g( OFF );
+		led.set_y( OFF );
+		
+		return;
 	}
 	
-	if( data->rec_en )
+	
+	//--- 映像入力異常 監視 ( 60秒映像断 )
+	//
+	if( is_video() != false )
 	{
-		if (value == 0) 
+		if( count_video_lost > 60s )
 		{
-			//---ボタンが押されている
-			//
-			_cnt_btn++;
+			count_video = 3s;
 		}
 		else
 		{
-			_cnt_btn = 0;
-		}
-		
-		if( _cnt_btn >= 30) 
-		{
-			//---３０秒間録画停止
-			//
-			SPDLOG_INFO("rec_stop start");
-			data->led_manager->set_g(nvr::led_manager::one);
-			data->rec_en = false;
-			_cnt_btn = 0;
+			count_video_lost++;
 		}
 	}
+	
+	
+	//--- 映像信号安定待ち ( 3秒連続受信 ）
+	//
+	if( count_video_found != 0 )
+	{
+		led.set_r( BLINK );
+		led.set_g( OFF );
+		led.set_y( OFF );
+		
+		count_video_lost = 0;
+		count_video_found--;
+	}
+	//--- sd card フォーマット中
+	//
+	else
+	*/
+	if( formatting == true )
+	{
+		data->led->set_r( data->low_battry  ? data->led->blink : data->led->off );
+		//data->led->.set_g( is_usb_connenct() ? BLINK : BLINK_TWO );
+
+		int res = data->sd_manager->is_formatting();
+        if (res == 0) {	//---フォーマット中
+		   //なにもしない
+		}
+		else
+		if (res == 1){	//---フォーマット完了
+			formatting = false;
+			data->led->set_y( data->led->off );
+		}
+		else
+		if (res == 2){	//---フォーマットerr
+			//ERR
+		}
+	}
+	//--- sd card あり
+	//
+	else
+	if( count_sd_none == 0 )
+	{
+		//--- 録画中
+		//
+		if( count_rec_off == 0 )
+		{
+			SPDLOG_INFO("on-timer 1");
+			data->led->set_r( data->low_battry  ? data->led->blink : data->led->off );
+			//led.set_g( is_usb_connenct() ? BLINK : BLINK_ONE );
+
+			
+			//--- SDカードチェック
+			//
+			if( data->sd_manager->is_sd_card() == false )
+			{
+				SPDLOG_INFO("on-timer 2");
+				//--- SDカードの未挿入時間を計測開始
+				//
+				SPDLOG_INFO("いきなり抜かれた");
+				count_sd_none = 600;  //60s
+				data->sd_manager->unmount_sd();
+			}
+			
+			
+			//--- 録画停止ボタンチェック
+			//
+			SPDLOG_INFO("on-timer 3");
+			if( is_btn(data) == true )
+			{
+			SPDLOG_INFO("on-timer 3-1");
+				count_btn_down++;
+				if( count_btn_down == 30 )
+				{
+				SPDLOG_INFO("on-timer 3-2");
+					//--- 録画停止中へ移行
+					//
+					SPDLOG_INFO("録画停止");
+					count_rec_off = 300; //30S
+					data->sd_manager->unmount_sd();
+				}
+			}
+			else
+			{
+				SPDLOG_INFO("on-timer 3-3");
+				count_btn_down = 0;
+			}
+
+			
+			//--- JPEGファイルコピー
+			//
+			SPDLOG_INFO("on-timer 4");			
+			count_copy_interval++;
+			if( count_copy_interval >= data->copy_interval )
+			{
+				SPDLOG_INFO("on-timer 4-1");
+				count_copy_interval = 0;
+
+				data->led->set_y( data->led->on );
+				//copy();
+				copy_jpeg(test_idx);
+				test_idx++;
+				//---まだ映像遮断検出が出来ていない
+				//
+				/*
+				if( is_low_voltage() == false )
+				{
+
+				}
+				else
+				{
+					count_err++;
+				}
+				*/
+			}
+			else
+			{
+				SPDLOG_INFO("on-timer 4-2");
+				data->led->set_y( data->led->off );
+			}
+		}
+		//--- 録画停止中
+		//
+		else
+		{
+			SPDLOG_INFO("on-timer 5");
+			//led.set_r( is_low_battery()  ? BLINK : OFF );
+			//led.set_g( is_usb_connenct() ? BLINK : BLINK_ONE ); 仕組みがないよ
+			data->led->set_y( data->led->off );
+			
+			count_btn_down = 0;
+			count_copy_interval = 0;
+			
+			if( data->sd_manager->is_sd_card() ==false )
+			{
+			SPDLOG_INFO("on-timer 5-1");
+				//--- SDカードの未挿入時間を計測開始
+				//
+				count_sd_none = 72000;
+			}
+			else
+			{
+			SPDLOG_INFO("on-timer 5-2");
+				//--- 30秒経過で録画中に戻る
+				//
+				count_rec_off--;
+			}
+		}
+	}
+	//--- sd card なし
+	//
 	else
 	{
-		if( _cnt_stop < 300 ){
-			_cnt_stop++;
+		SPDLOG_INFO("on-timer 6");
+		data->led->set_r( data->led->blink );
+		data->led->set_g( data->led->off );
+		data->led->set_y( data->led->off );
+		
+		count_rec_off = 0;
+		count_btn_down = 0;
+		count_copy_interval = 0;
+		data->sd_manager->mount_sd();
+		//--- sdカードが挿入された
+		//
+		if ( data->sd_manager->check_proc_mounts() == true )
+		{
+			SPDLOG_INFO("on-timer 6-1");
+			count_sd_none = 0;
+			SPDLOG_INFO("SD挿入");
+//			data->sd_manager->mount_sd();
+				
+				
+			//---sd card チェック
+			//
+			if( data->sd_manager->is_root_file_exists()  == false) {
+				// なんならフォーマット
+				//フォーマット中はどうする？
+				SPDLOG_INFO("on-timer 6-2");
+				SPDLOG_INFO("format start");				
+				data->sd_manager->start_format();
+				data->led->set_y( data->led->on );
+				formatting = true;
+			}			
 		}
+		
+		//--- 一定時間SDカードが未挿入
+		//
+		else
+		if( count_sd_none == 1 )
+		{
+			SPDLOG_INFO("on-timer 7");
+			/*
+			out_err on(); 
+			IO.SET_1( LOW );
+			IO.SET_2( LOW );
+			*/
+		}
+		
+		//--- SDカード未挿入時間カウント中
+		//
 		else
 		{
-			SPDLOG_INFO("rec_stop over30");
-			if(data->sd_manager->check_mount_point())
-			{
-				//
-				//
-				SPDLOG_INFO("rec_stop end");
-				data->rec_en = true;
-				data->led_manager->set_g(nvr::led_manager::on);
-				_cnt_stop = 0;
-			}
+		SPDLOG_INFO("on-timer 8");
+			count_sd_none--;
 		}
 	}
 	
-	
-	//--- 同期エラー
-	//
-	if (jpeg_time <= t)
-	{
-		bool is_video_error = data->is_video_error;
-		if ((t - jpeg_time) > 1)
-		{
-			if (!is_video_error)
-			{
-				data->led_manager->set_g(nvr::led_manager::off);
-				data->led_manager->set_r(nvr::led_manager::blink);
-				data->logger->write("E カメラ映像同期エラー");
-				data->is_video_error = true;
-			}
-		} 
-		else 
-		{
-			if (is_video_error) 
-			{
-				//data->led_manager->clear_status(nvr::led_manager::state_error_video);
-				data->is_video_error = false;
-			}
-		}
-	}
-	
-	
-	//---LED 点灯パターン更新
-	//
-	SPDLOG_INFO("callback_timer2 update_led");
-	data->led_manager->update_led();
-	
+	data->led->update_led();
+
 	return G_SOURCE_CONTINUE;
 }
+
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
@@ -473,14 +829,6 @@ static gboolean callback_bus_watch_cb(GstBus * /* bus */, GstMessage *message, g
 		{
 			const GstStructure *s = gst_message_get_structure(message);
 			
-			if (s && gst_structure_has_name(s, "splitmuxsink-fragment-closed"))
-			{
-				break;
-				
-				//---mp4 保存
-				//
-			}
-			else
 			if (s && gst_structure_has_name(s, "GstMultiFileSink"))
 			{
 				//---受信したデータをjpegにして保存
@@ -585,7 +933,6 @@ static gboolean callback_signal_user1(gpointer udata)
 	
 	video_send_message(static_cast<GstElement*>(*data->pipeline));
 	data->interrupted.store(true, std::memory_order_relaxed);
-	data->video_writer->stop();
 	data->b_reboot = true;
 	
 	data->logger->write("L リブート");
@@ -616,8 +963,6 @@ static gboolean callback_signal_intr(gpointer udata)
 	
 	video_send_message(static_cast<GstElement*>(*data->pipeline));
 	data->interrupted.store(true, std::memory_order_relaxed);
-	data->video_writer->stop();
-	
 	/* remove signal handler */
 	data->signal_int_id = 0;
 	return G_SOURCE_REMOVE;
@@ -634,7 +979,6 @@ static gboolean callback_signal_term(gpointer udata)
 	
 	video_send_message(static_cast<GstElement*>(*data->pipeline));
 	data->interrupted.store(true, std::memory_order_relaxed);
-	data->video_writer->stop();
 	
 	/* remove signal handler */
 	data->signal_term_id = 0;
@@ -650,75 +994,9 @@ static gboolean callback_signal_term(gpointer udata)
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
-static const std::filesystem::path pid_file_path{"/run/nvr.pid"};
-
-/*----------------------------------------------------------
-----------------------------------------------------------*/
-static int video_write_pid_file()
-{
-	//---自分のpidをファイルに保存
-	//
-	pid_t pid = getpid();
-	FILE *fp = fopen(pid_file_path.c_str(), "w");
-	if (fp == nullptr) {
-		SPDLOG_ERROR("Failed to open {}: {}", pid_file_path.c_str(), strerror(errno));
-		return -1;
-	}
-	fprintf(fp, "%d\n", pid);
-	fflush(fp);
-	fclose(fp);
-
-	return 0;
-}
-
-
-/*----------------------------------------------------------
-----------------------------------------------------------*/
-static void video_unlink_pid_file()
-{
-	//---/run/nvr.pidがあれば削除
-	//
-	std::error_code ec;
-	if (std::filesystem::exists(pid_file_path, ec)) {
-		std::filesystem::remove(pid_file_path, ec);
-	}
-}
-
-
-/*----------------------------------------------------------
-----------------------------------------------------------*/
 static nvr::video_src *video_src(const nvr::config& config)
 {
     return new nvr::v4l2_src(config.video_width(), config.video_height());
-}
-
-
-/*----------------------------------------------------------
-----------------------------------------------------------*/
-static nvr::video_sink *video_sink(const char *tmp_dir, const nvr::config& config)
-{
-	nvr::video_sink *ret = nullptr;
-	std::filesystem::path path(tmp_dir);
-	path /= "video";
-	
-	//---/tmp/nvrのディレクトリがあるかの存在確認
-	//
-	std::error_code ec;
-	if (!std::filesystem::is_directory(path, ec))
-	{
-		//ディレクトリがないので作成
-		//
-		if (!std::filesystem::create_directories(path, ec))
-		{
-			SPDLOG_ERROR("Failed to make directory: {}.", path.c_str());
-			return nullptr;
-		}
-	}
-	SPDLOG_DEBUG("Video location directory is {}.", path.c_str());
-
-	//動画の保存場所のpathを返す
-	//
-	return new nvr::video_sink( path.c_str(), config.video_framerate(), config.video_bitrate() );
 }
 
 
@@ -785,8 +1063,6 @@ static std::filesystem::path video_done_directory(const char *tmp_dir)
 			{
 				unlink(entry.path().c_str());
 			}
-			//なんのために行ってるか不明
-			/**********************************************************/
 		}
 	} 
 	catch (const std::exception &err) 
@@ -837,7 +1113,7 @@ static bool wait_power_pin(std::shared_ptr<nvr::gpio_in> pm, callback_data_t *da
 	sigaddset (&mask, SIGUSR2);
 	
 	/**********************************************************/
-	//よくわかっていない
+	//アップローダーに持っていく
 	/**********************************************************/
 	if (sigprocmask (SIG_BLOCK, &mask, nullptr) == -1) {
 		SPDLOG_ERROR("Failed to sigprocmask: {}", strerror(errno));
@@ -934,16 +1210,284 @@ END:
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
+void *usb_bulk_in_thread(usb_raw_gadget *usb, int ep_num)
+{
+    struct usb_packet_control pkt;
+    auto timeout_at = std::chrono::steady_clock::now();
+
+    while (true) {
+        const auto now = std::chrono::steady_clock::now();
+        while (timeout_at <= now) {
+            timeout_at += std::chrono::milliseconds(40);
+        }
+     
+        usb_tx_buffer.wait(timeout_at);
+        
+        
+        /*
+
+        pkt.data[0] = 0x31;
+        pkt.data[1] = 0x60;
+        int payload_length = usb_tx_buffer.dequeue(&pkt.data[2], sizeof(pkt.data) - 2);
+
+        pkt.header.ep = ep_num;
+        pkt.header.flags = 0;
+        pkt.header.length = 2 + payload_length;
+
+        if (connected.load()) {pkt.data[0] |= 0x80;}
+
+        usb->ep_write(reinterpret_cast<struct usb_raw_ep_io *>(&pkt));
+        */
+    }
+
+    return NULL;
+}
+
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+void *usb_bulk_out_thread(usb_raw_gadget *usb, int ep_num) {
+    struct usb_packet_bulk pkt;
+    std::string buffer;
+
+    bool echo = false;
+
+    while (true) {
+	    SPDLOG_INFO("Thread RECV");
+        pkt.header.ep = ep_num;
+        pkt.header.flags = 0;
+        pkt.header.length = sizeof(pkt.data);
+
+        int ret = usb->ep_read(reinterpret_cast<struct usb_raw_ep_io *>(&pkt));
+        int payload_length = pkt.data[0] >> 2;
+        if (payload_length != ret - 1) {
+            printf("Payload length mismatch! (payload length in header: %d, received payload: %d)\n", payload_length, ret - 1);
+            payload_length = std::min(payload_length, ret - 1);
+        }
+        buffer.append(&pkt.data[1], payload_length);
+
+		bool enter_online = false;
+
+        auto newline_pos = buffer.find('\x0d');
+        if (newline_pos == std::string::npos) {break;}
+        std::string line = buffer.substr(0, newline_pos);
+        buffer.erase(0, newline_pos + 1);
+        if (line.empty()) {break;}
+
+        printf("command: %s\n", line.c_str());
+
+    }
+
+    return NULL;
+}
+
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+bool process_control_packet(usb_raw_gadget *usb, usb_raw_control_event *e, struct usb_packet_control *pkt)
+{
+    if (e->is_event(USB_TYPE_STANDARD, USB_REQ_GET_DESCRIPTOR)) {
+        const auto descriptor_type = e->get_descriptor_type();
+        if (descriptor_type == USB_DT_DEVICE) {
+            memcpy(pkt->data, &me56ps2_device_descriptor, sizeof(me56ps2_device_descriptor));
+            pkt->header.length = sizeof(me56ps2_device_descriptor);
+            return true;
+        }
+        if (descriptor_type == USB_DT_CONFIG) {
+            memcpy(pkt->data, &me56ps2_config_descriptors, sizeof(me56ps2_config_descriptors));
+            pkt->header.length = sizeof(me56ps2_config_descriptors);
+            return true;
+        }
+        if (descriptor_type == USB_DT_STRING) {
+            const auto id = e->ctrl.wValue & 0x00ff;
+            if (id >= STRING_DESCRIPTORS_NUM) {return false;} // invalid string id
+            const auto len = reinterpret_cast<const struct _usb_string_descriptor<1> *>(me56ps2_string_descriptors[id])->bLength;
+            memcpy(pkt->data, me56ps2_string_descriptors[id], len);
+            pkt->header.length = len;
+            return true;
+        }
+    }
+    if (e->is_event(USB_TYPE_STANDARD, USB_REQ_SET_CONFIGURATION)) 
+    {
+    	SPDLOG_INFO("USB_REQ_SET_CONFIGURATION");
+    	
+    	if( flag == 0 )
+    	{
+  			SPDLOG_INFO("ep_enable");
+  			usb->reset_eps();
+
+
+			const int ep_num_bulk_in = usb->ep_enable(
+			reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_in));
+			SPDLOG_INFO("ep1  OK  int = {}",ep_num_bulk_in);
+			thread_bulk_in = new std::thread(usb_bulk_in_thread, usb, ep_num_bulk_in);
+
+
+			const int ep_num_bulk_out = usb->ep_enable(
+			reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_out));
+			SPDLOG_INFO("ep2  OK  int = {}",ep_num_bulk_out);
+			thread_bulk_out = new std::thread(usb_bulk_out_thread, usb, ep_num_bulk_out);
+
+			/*
+			const int ep_num_bulk_in2 = usb->ep_enable(
+			reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_in2));
+			SPDLOG_INFO("ep3  OK");
+
+
+			const int ep_num_bulk_out2 = usb->ep_enable(
+			reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_out2));
+			SPDLOG_INFO("ep4  OK");
+  			*/
+  				
+  			/*
+  			try 
+  			{
+				const int ep_num_bulk_in = usb->ep_enable(
+				reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_in));
+				SPDLOG_INFO("ep1  OK");
+			} catch (const std::exception& e) {
+				SPDLOG_ERROR("ep1 例外発生: {}", e.what());
+				return false;
+			}
+  			
+  			
+  			try 
+  			{
+				const int ep_num_bulk_out = usb->ep_enable(
+				reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_out));
+				SPDLOG_INFO("ep2  OK");
+			} catch (const std::exception& e) {
+				SPDLOG_ERROR("EP2例外発生: {}", e.what());
+				return false;
+			}
+
+			
+  			try {
+				const int ep_num_bulk_in2 = usb->ep_enable(
+				reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_in2));
+				SPDLOG_INFO("ep3  OK");
+			} catch (const std::exception& e) {
+				SPDLOG_ERROR("EP3例外発生: {}", e.what());
+				return false;
+			}
+
+
+  			try {
+				const int ep_num_bulk_out2 = usb->ep_enable(
+				reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_out2));
+				SPDLOG_INFO("ep4  OK");
+			} catch (const std::exception& e) {
+				SPDLOG_ERROR("EP4例外発生: {}", e.what());
+				return false;
+			}
+			*/
+						
+			flag = 1;
+			SPDLOG_INFO("ep_enable END");
+		}
+        
+        
+		usb->vbus_draw(me56ps2_config_descriptors.config.bMaxPower);
+        usb->configure();
+        printf("USB configurated.\n");
+        pkt->header.length = 0;
+        return true;
+    }
+    if (e->is_event(USB_TYPE_STANDARD, USB_REQ_SET_INTERFACE)) {
+        pkt->header.length = 0;
+        
+        return true;
+    }
+     if (e->is_event(USB_TYPE_VENDOR, 0x01)) {
+        pkt->header.length = 0;
+		SPDLOG_INFO("USB_TYPE_VENDOR001");
+        return true;
+    }
+    if (e->is_event(USB_TYPE_VENDOR)) {
+        pkt->header.length = 0;
+		SPDLOG_INFO("USB_TYPE_VENDOR");
+        return true;
+    }
+
+    return false;
+}
+
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+bool event_usb_control_loop(usb_raw_gadget *usb)
+{
+    usb_raw_control_event e;
+    e.event.type = 0;
+    e.event.length = sizeof(e.ctrl);
+
+    struct usb_packet_control pkt;
+    pkt.header.ep = 0;
+    pkt.header.flags = 0;
+    pkt.header.length = 0;
+
+    usb->event_fetch(&e.event);
+ 
+    switch(e.event.type) {
+        case USB_RAW_EVENT_CONNECT:
+            break;
+        case USB_RAW_EVENT_CONTROL:
+            if (!process_control_packet(usb, &e, &pkt)) {
+                usb->ep0_stall();
+                break;
+            }
+
+            pkt.header.length = std::min(pkt.header.length, static_cast<unsigned int>(e.ctrl.wLength));
+            if (e.ctrl.bRequestType & USB_DIR_IN) {
+                usb->ep0_write(reinterpret_cast<struct usb_raw_ep_io *>(&pkt));
+            } else 
+            {
+			    SPDLOG_INFO("ep0_read");            	
+                usb->ep0_read(reinterpret_cast<struct usb_raw_ep_io *>(&pkt));
+            }
+            break;
+        default:
+            break;
+    }
+
+    return true;
+}
+
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
 int main(int argc, char **argv)
 {
+	const char *driver = USB_RAW_GADGET_DRIVER_DEFAULT;
+    const char *device = USB_RAW_GADGET_DEVICE_DEFAULT;
+    
+    SPDLOG_INFO("main start");
+    
+    /*
+    SPDLOG_INFO("usb_raw_gadget");
+	usb_raw_gadget *usb = new usb_raw_gadget("/dev/raw-gadget");
+    //usb->set_debug_level(debug_level);
+    SPDLOG_INFO("init");
+    usb->init(USB_SPEED_HIGH, driver, device);
+    usb->reset_eps();
+    SPDLOG_INFO("run");
+    usb->run();
+    
+	SPDLOG_INFO("while Start");
+	while(event_usb_control_loop(usb));
+	SPDLOG_INFO("while end");
+	*/
+	
+
+
+
 	//---init
 	//
 	std::shared_ptr<nvr::pipeline> pipeline;
-	std::shared_ptr<nvr::video_writer> video_writer;
 	spdlog::set_level(spdlog::level::debug);
 	
 	callback_data_t data{};
-	SPDLOG_INFO("ver0.1.3");
+	SPDLOG_INFO("ver0.1.4");
 	
 	//GPIO 初期化
 	//
@@ -958,6 +1502,10 @@ int main(int argc, char **argv)
 	std::shared_ptr<nvr::gpio_in>   gpio_stop_btn = std::make_shared<nvr::gpio_in >("241", "P15_1");
 	std::shared_ptr<nvr::logger>	logger        = std::make_shared<nvr::logger  >("/etc/nvr/video-recorder.log");
 	
+
+	/*******************************************************************************/
+	
+	
 	/*
 	if (pwd_decoder->open(true)) {
 		SPDLOG_ERROR("Failed to open pwd_decoder."));
@@ -969,12 +1517,11 @@ int main(int argc, char **argv)
 		exit(-1);
 	}
 	*/
-	
 	if (gpio_battery->open(nullptr)) {
 		SPDLOG_ERROR("Failed to open gpio_stop_btn.");
 		exit(-1);
 	}
-	
+
 	//---機器異常出力初期化
 	//
 	if (gpio_alrm_a->open()) {
@@ -1001,19 +1548,13 @@ int main(int argc, char **argv)
 		exit(-1);
 	}
 	
-	
+	SPDLOG_INFO("3");
+
 	//---gstreamer初期化
 	//
 	gst_init(&argc, &argv);
-	/**********************************************************/
-	//自分のpidをファイル保存
-	//
-	video_write_pid_file();
-	//なんのために行ってるか不明
-	//終了処理時に使用。自分をしっかりと殺すため？
-	/**********************************************************/
-	
-	
+
+		
 	//--- pipeline初期化
 	//
 	const char *config_file = "/etc/nvr/nvr.json";
@@ -1024,7 +1565,6 @@ int main(int argc, char **argv)
 	
 	auto config = nvr::config(config_file, factoryset_file);
 	pipeline->set_video_src(video_src(config));
-	pipeline->set_video_sink(video_sink(tmp_dir, config));
 	pipeline->set_jpeg_sink(video_jpeg_sink(tmp_dir, config));
 	
 	data.jpeg_file = jpeg_file;
@@ -1033,6 +1573,7 @@ int main(int argc, char **argv)
 		std::exit(-1);
 	}
 	
+
 	//--- ルートファイルシステム 再マウント
 	//
 	if (mount(nullptr, "/", nullptr, MS_REMOUNT, nullptr)) {
@@ -1042,16 +1583,25 @@ int main(int argc, char **argv)
 	
 	sleep(5);
 	
-	std::shared_ptr<nvr::led_manager> led_manager = std::make_shared<nvr::led_manager>();
 	
-	led_manager->set_g(nvr::led_manager::off);
-	led_manager->set_r(nvr::led_manager::off);
+	std::shared_ptr<nvr::led_manager> led = std::make_shared<nvr::led_manager>();
+
+	led->set_g(led->off);
+	led->set_r(led->off);
 
 
 	//---ボタン電池の電圧確認
 	//
 	guchar bat;
-	gpio_battery->read_value(&bat);
+	//gpio_battery->read_value(&bat);
+	if(	gpio_battery->read_value(&bat))
+	{
+		data.low_battry = false;
+	}
+	else
+	{
+		data.low_battry = true;
+	}
 	
 	
 	//---SD周りの初期化
@@ -1059,29 +1609,20 @@ int main(int argc, char **argv)
 	std::shared_ptr<nvr::sd_manager> sd_manager = std::make_shared<nvr::sd_manager>(
 		"/dev/mmcblk1p1",
 		"/mnt/sd",
-		"/mnt/sd/.nrs_video_data",
-		"/mnt/sd/nvr",
 		"/usr/bin/nvr",
 		logger
 	);
 	
-	
-	//--- 映像系初期化
-	//
-	video_writer = std::make_shared<nvr::video_writer>(data.done_dir.c_str(), "/mnt/sd");
-	//video_writer->set_led_manager(led_manager);
-	video_writer->set_sd_manager(sd_manager);
-	video_writer->set_logger(logger);
-	
 	//--- callback_data_tにポインターセット
 	//
-	data.pipeline      = pipeline;
-	data.video_writer  = video_writer;
-	data.led_manager   = led_manager.get();
+	data.led   = led.get();
 	data.sd_manager    = sd_manager.get();
+	data.pipeline      = pipeline;
 	data.gpio_power = gpio_power.get();
 	data.logger        = logger;
 	data.gpio_stop_btn  = gpio_stop_btn.get();
+	data.copy_interval = 10;
+	
 	
 	
 	//--- callback bus
@@ -1095,9 +1636,10 @@ int main(int argc, char **argv)
 	
 	//--- timer1 start
 	//
+	SPDLOG_INFO("timer set");
 	data.timer1_id = g_timeout_add_full( G_PRIORITY_HIGH,
 										 100,
-										 G_SOURCE_FUNC(callback_timer1),
+										 G_SOURCE_FUNC(on_timer),
 										 &data,
 										 nullptr );
 	if (!data.timer1_id){
@@ -1105,19 +1647,7 @@ int main(int argc, char **argv)
 		exit(-1);
 	}
 	
-	//--- timer2 start
-	//
-	data.timer2_id = g_timeout_add_full( G_PRIORITY_DEFAULT,
-										 100,
-										 G_SOURCE_FUNC(callback_timer2),
-										 &data,
-										 nullptr );
-	if (!data.timer2_id) {
-		SPDLOG_ERROR("Failed to add timer2.");
-		exit(-1);
-	}
-	
-	
+
 	//---console input enable(メインループをコンソールからkillするため)
 	//
 #ifdef G_OS_UNIX
@@ -1128,7 +1658,6 @@ int main(int argc, char **argv)
 #endif
 	
 	std::thread thread_power_monitior;
-	std::thread thread_video_writer;
 	
 	
 	//---電源監視スレッドの作成
@@ -1139,7 +1668,7 @@ int main(int argc, char **argv)
 	}
 	
 	
-	//--- ???
+	//--- 電源監視の優先度を上げる。
 	//
 	struct sched_param param;
 	param.sched_priority = std::max(sched_get_priority_max(SCHED_FIFO) / 3, sched_get_priority_min(SCHED_FIFO));
@@ -1151,8 +1680,7 @@ int main(int argc, char **argv)
 	//---録画スレッドの作成
 	//
 	SPDLOG_DEBUG("Start video writer.");
-	thread_video_writer = std::thread(video_writer->process());
-	led_manager->set_g(nvr::led_manager::on);
+	led->set_g(led->on);
 	
 	
 	//---pipelineを有効可
@@ -1178,13 +1706,7 @@ int main(int argc, char **argv)
 END:
 	//---終了処理
 	//
-	video_writer->stop();
 	data.interrupted.store(true, std::memory_order_relaxed);
-	
-	if (thread_video_writer.joinable()) {
-	thread_video_writer.join();
-	}
-	
 	
 	if (thread_power_monitior.joinable()) {
 	thread_power_monitior.join();
@@ -1193,11 +1715,6 @@ END:
 	if (data.bus_watch_id)
 	{
 	g_source_remove(data.bus_watch_id);
-	}
-	
-	if (data.timer2_id)
-	{
-		g_source_remove(data.timer2_id);
 	}
 	
 	if (data.timer1_id)
@@ -1224,8 +1741,6 @@ END:
 	}
 #endif
 	
-	video_unlink_pid_file();
-	
 
 	if (data.b_reboot) {
 		std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -1237,6 +1752,11 @@ END:
 /***********************************************************
 	end of file
 ***********************************************************/
+
+
+
+
+
 
 
 
