@@ -22,6 +22,7 @@ app_sources = [
     'src/logging.cpp',
     'src/usb_raw_control_event.cpp',
     'src/usb_raw_gadget.cpp',
+    'src/usb.cpp',
 ]
 
 update_sources = [
