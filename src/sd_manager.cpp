@@ -13,8 +13,8 @@
 
 namespace nvr {
     const char *MKFS_PATH = "/sbin/mkfs.vfat";
-    const std::filesystem::path inf1 = "/mnt/sd/REC_INF1.dat";
-    const std::filesystem::path inf2 = "/mnt/sd/REC_INF2.dat";
+    const std::filesystem::path inf1 = "/mnt/sd/EVC/REC_INF1.dat";
+    const std::filesystem::path inf2 = "/mnt/sd/EVC/REC_INF2.dat";
     namespace fs = std::filesystem;
     const int sd_manager::mount_state_not_mounted = 0;
     const int sd_manager::mount_state_mounting = 1;
@@ -265,6 +265,13 @@ namespace nvr {
 
         /********************************************* */
 
+        //---EVCのフォルダ作成
+        //
+        if( !create_dir("/mnt/sd/EVC")){
+            return -7;
+        }
+
+
         //作成可能なファイル数を取得
         //
         uint64_t sector_count = get_sector_count();                             //セクター数 
@@ -335,7 +342,7 @@ namespace nvr {
         if(file_count > 999999){
             //---DIR1_00/DIR2_00/DIR3_00ディレクトリ作成
             //
-            if( !create_dir("/mnt/sd/DIR1_00/DIR2_00/DIR3_00")){
+            if( !create_dir("/mnt/sd/EVC/DIR1_00/DIR2_00/DIR3_00")){
                 return -5;
             }
         }
@@ -343,7 +350,7 @@ namespace nvr {
         {
             //---DIR1_00/DIR2_00ディレクトリ作成
             //
-            if( !create_dir("/mnt/sd/DIR1_00/DIR2_00")){
+            if( !create_dir("/mnt/sd/EVC/DIR1_00/DIR2_00")){
                 return -6;
             }
             
@@ -380,15 +387,32 @@ namespace nvr {
     ----------------------------------------------------------*/
     bool sd_manager::is_sd_card()
     {
-        if ( !check_proc_mounts() ){
-            SPDLOG_INFO("check_proc_mounts false");
+
+        //---SDカードが挿入されているか
+        //
+        if ( !is_device_file_exists() ){
+            SPDLOG_INFO("is_device_file_exists false");
             return false;
         }
+
+
+        //---SDカードがマウントされているか
+        //
+        if ( !check_proc_mounts() ){
+            mount_sd();
+            if(!check_proc_mounts()){
+                SPDLOG_INFO("check_proc_mounts false");
+                return false;
+            }
+        }
         
+        //---SDカードを読めるか
+        //
         if( !is_root_file_exists() ) {
             SPDLOG_INFO("is_root_file_exists false");
             return false;
         }
+        
         
         return true;
     }
@@ -434,6 +458,7 @@ namespace nvr {
         return true;
     }
 }
+
 
 
 

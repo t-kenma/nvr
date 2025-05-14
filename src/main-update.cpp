@@ -24,9 +24,34 @@
 #include <sstream>
 
 
+struct callback_data_t
+{
+	callback_data_t() : signal_int_id(0),
+					    signal_term_id(0),
+					    signal_user1_id(0),
+					    signal_user2_id(0),
+					    b_reboot(false),
+					    interrupted(false),
+						gpio_power(nullptr),
+					    is_power_pin_high(false)
+	{}
+	
+	guint signal_int_id;
+	guint signal_term_id;
+	guint signal_user1_id;
+	guint signal_user2_id;
+	bool b_reboot;
+	std::atomic<bool> interrupted;
+	nvr::gpio_in *gpio_power;
+	std::atomic<bool> is_power_pin_high;
+	
+	std::shared_ptr<nvr::logger> logger;	
+};
+
+
 namespace fs = std::filesystem;
-const std::filesystem::path inf1 = "/mnt/sd/REC_INF1.dat";
-const std::filesystem::path inf2 = "/mnt/sd/REC_INF2.dat";
+const std::filesystem::path inf1 = "/mnt/sd/EVC/REC_INF1.dat";
+const std::filesystem::path inf2 = "/mnt/sd/EVC/REC_INF2.dat";
 int g_mount_status = 0;
 guint signal_int_id;
 guint signal_term_id;
@@ -38,8 +63,7 @@ nvr::gpio_out *led_board_yel;
 
 
 #define PATH_UPDATE		"/mnt/sd/bin/"
-#define PATH_EXECUTE	"/var/tmp/app_exe/"
-#define BUCKUP_EXECUTE	"/usr/bin/nvr"
+#define EXECUTE	"/usr/bin/nvr"
 
 
 bool check_proc_mounts();
@@ -155,12 +179,104 @@ bool is_sd_card()
 	return true;
 }
 
+#if 1
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+int uncompress_encrypted( const char* zip_path )
+{
+	pid_t pid = fork();  // 子プロセスを作る
+	if (pid == 0) {
+	    // 子プロセスで unzip 実行
+	    execl("/usr/bin/unzip", "unzip", "-P", "NRS", zip_path, "-d", EXECUTE, (char*)NULL);
+	    
+	    // execl が失敗した場合だけここに来る
+	    std::perror("execl failed");
+	    return 1;
+	} else if (pid > 0) {
+	    // 親プロセス：子プロセスの終了を待つ
+	    int status;
+	    waitpid(pid, &status, 0);
+	    if (WIFEXITED(status)) {
+	        std::cout << "Unzip exited with code: " << WEXITSTATUS(status) << std::endl;
+	    }
+	} else {
+	    // fork 失敗
+	    std::perror("fork failed");
+	    return 1;
+	}
+	
+	return 0;
+}
+
+
+
+
+
+
+/*
+	// パスワードの定義
+	const char* thePassWord = "NRS";
+
+
+	// ZIPファイルを読み取り専用で開く
+	int errorp;
+
+	zip_t* zipper = zip_open( zip_path, ZIP_RDONLY, &errorp );
+
+	// ZIP内のファイルの個数を取得
+	zip_int64_t num_entries = zip_get_num_entries(zipper, 0);
+
+	// ZIP内のファイルの各ファイル名を取得
+	std::cout << "count: " << num_entries << std::endl;
+	for (zip_int64_t index = 0; index < num_entries; index++) {
+		std::cout << "[" << index << "]" << zip_get_name(zipper, index, ZIP_FL_ENC_RAW) << std::endl;
+	}
+
+	// ZIP内の1番目のファイルに関する情報を取得する
+	struct zip_stat sb;
+	zip_int64_t index = 1;
+	zip_stat_index(zipper, index, 0, &sb);
+
+	// 1番目のファイルのファイルサイズと同じメモリを確保する
+	char* contents = new char[sb.size];
+
+	// 1番目のファイルの内容をメモリに読み込む
+	zip_file* zf = zip_fopen_encrypted(zipper, sb.name, 0, thePassWord);
+	zip_fread(zf, contents, sb.size);
+	zip_fclose(zf);
+
+	zip_close(zipper);
+
+	//////////////////
+	// ファイル名を出力できる形に変更
+	// ファイル一覧は階層構造をしておらず、ディレクトリ区切りは'/'で直接出力できないので
+	// ファイル名中の'/'を'-'に置き換える。
+	// 本来なら再帰的にディレクトリを作るなどすべき。
+	std::string target = sb.name;
+	for (size_t i = 0; i < target.size(); i++) {
+	if (target[i] == '/') {
+	target[i] = '-';
+	}
+	}
+	//
+	//////////////////
+
+	// 解凍したファイルを作成
+	std::string outname = "/home/root/exec/" + target;
+	FILE* of = fopen(outname.c_str(), "wb");
+	fwrite(contents, 1, sb.size, of);
+	fclose(of);
+}
+*/
+#endif
+
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
 bool get_update_file( char* name )
 {
 	SPDLOG_INFO("get_update_file()");
-	const char *bin_dir = "/mnt/sd/bin"; 
+	//const char *bin_dir = "/mnt/sd/bin"; 
+	const char *bin_dir = "/mnt/sd"; 
 	fs::path path(bin_dir);
 	std::error_code ec;	
 	
@@ -181,9 +297,8 @@ bool get_update_file( char* name )
 		std::string filename = x.path().filename().string();
 		std::cout << filename << std::endl;
 		
-		int pos = filename.find("nvr");
+		int pos = filename.find("evc");
 		std::cout << pos << std::endl;
-		
 		
 		//ファイル名にnvrとついたファイルがあるかの確認(実行ファイル)
 		//
@@ -191,6 +306,10 @@ bool get_update_file( char* name )
 			continue;
 		}
 		
+		pos = filename.length() - filename.find(".zip");
+		if(pos != 3){
+			continue;
+		}
 		
 		//最初に見つかったファイル名を返す
 		//
@@ -221,9 +340,7 @@ bool get_execute_file( char* name )
 	}
 	
 	
-	//"/tmp/app_exe にあるファイル名を取得
-	//
-	for (const fs::directory_entry& x : fs::directory_iterator(PATH_EXECUTE)) 
+	for (const fs::directory_entry& x : fs::directory_iterator(EXECUTE)) 
 	{
 		std::cout << x.path() << std::endl;
 		std::string filename = x.path().filename().string();
@@ -239,45 +356,10 @@ bool get_execute_file( char* name )
 bool execute()
 {
 	SPDLOG_INFO("execute()");
-	const char *exe_dir = "/var/tmp/app_exe"; 
-	fs::path path(exe_dir);
+	fs::path path(EXECUTE);
 	std::error_code ec;
 	
-	//---/tmp/app_exeディレクトリの存在確認
-	//
-	if (!fs::exists(path, ec)) {
-		//---ディレクトリがないので作成
-		//
-		if (!fs::create_directories(path, ec)) {
-			SPDLOG_ERROR("Failed to make directory: {}.", path.c_str());
-			return false;
-		}
-		
-		//---実行ファイルを作成したディレクトリにコピー
-		//
-		try
-		{
-			char exe[256];
-			strcpy( exe, PATH_EXECUTE );
-			strcat( exe, "nvr");
-			fs::copy_file( BUCKUP_EXECUTE, exe);
-		}
-		catch (const fs::filesystem_error& e)
-		{
-			std::cerr << "コピーに失敗: " << e.what() << '\n';
-			return false;
-		}
-			SPDLOG_INFO("コピー  OK");	
-	}
 	
-	
-	//---実行ファイル名の取得
-	//
-	char exe_name[256] = {0};
-	if(!get_execute_file(exe_name)){
-		SPDLOG_INFO("get_execute_file false");
-		return false;
-	}
 	
 	
 	//---プロセスを複製し子プロセスを作成
@@ -297,15 +379,10 @@ bool execute()
 		//---子プロセス処理
 		//
 		SPDLOG_INFO(" child pid = {}",pid);
-		char exe_path[256];
-		strcpy( exe_path, PATH_EXECUTE );
-		strcat( exe_path, exe_name );
-		SPDLOG_INFO("execute = {}",exe_path);
-		
 		
 		//実行ファイルを実行
 		//
-		execl( exe_path  , exe_path, "-r", "now", nullptr);
+		execl( path.c_str()  , path.c_str(), "-r", "now", nullptr);
 		SPDLOG_ERROR("Failed to exec nvr.");
 		
 		
@@ -338,55 +415,9 @@ bool update()
 		return false;
 	}
 	
-	
 
-	/*
-	char update_path[256];
-	strcpy( update_path, PATH_UPDATE );
-	strcat( update_path, update_name );
-	*/
-	fs::path update_path = fs::path(PATH_UPDATE) / update_name;
-
-
-	//---実行ファイルの存在確認
-	//
-	char execute_name[256]  = {0};
-	if( get_execute_file( execute_name ) == false )
-	{
-		SPDLOG_INFO("get_execute_file() false");
-		// 実行ファイルが無いのでコピーだけ
-		try
-		{
-			SPDLOG_INFO("実行ファイルが無いのでコピーだけ");
-			/*
-			strcpy( exe_path, PATH_EXECUTE );
-			strcat( exe_path, update_name );
-			*/
-			fs::path copy_path = fs::path(PATH_EXECUTE) / update_name;
-			fs::copy_file( update_path, copy_path,
-			fs::copy_options::overwrite_existing);
-		}
-		catch (const fs::filesystem_error& e)
-		{
-			std::cerr << "コピーに失敗: " << e.what() << '\n';
-			return false;
-		}
 		
-		if( get_execute_file( execute_name ) == false ){
-			return false;
-		}
-	}
-	
-	
-	//---アップデートファイルと実行ファイルが同じファイルか
-	//
-	SPDLOG_INFO("update_name = {}",update_name);
-	SPDLOG_INFO("execute_name = {}",execute_name);
-	if( strcmp(update_name, execute_name) == 0){
-		SPDLOG_INFO("update_name == execute_name");
-		return false;
-	}
-	
+
 	
 	//--- プロセスを停止
 	//
@@ -406,7 +437,7 @@ bool update()
 	SPDLOG_INFO("実行ファイルを削除");
 	try
 	{
-		fs::path del_path = fs::path(PATH_EXECUTE) / execute_name;
+		fs::path del_path = fs::path(EXECUTE);
 		fs::remove( del_path );
 		SPDLOG_INFO("del execute = {}",del_path.string());
 	}
@@ -419,46 +450,311 @@ bool update()
 	
 	//--- アップデートファイルをコピー
 	//
-	SPDLOG_INFO("アップデートファイルをコピー");	
-	try
+	if(!uncompress_encrypted( (const char*)update_name ))
 	{
-		fs::path exe_path = fs::path(PATH_EXECUTE) / update_name;
-		SPDLOG_INFO("from = {}",update_path.string());
-		SPDLOG_INFO("to = {}",exe_path.string());
-		fs::copy_file( update_path, exe_path,
-		fs::copy_options::overwrite_existing);
-		SPDLOG_INFO("コピー  END");	
-	}
-	catch (const fs::filesystem_error& e)
-	{
-		std::cerr << "コピーに失敗: " << e.what() << '\n';
 		return false;
 	}
-	SPDLOG_INFO("コピー  OK");	
 	
-	//--- led チカチカ
-	//
-	/*
-	for( int i = 0; i < 3; i++ )
-	{
-		SPDLOG_INFO("led チカチカ");	
-		led_board_green->write_value(true);
-		led_board_red->write_value(true);
-		led_board_yel->write_value(true);
-		led_board_green->write_value(false);
-		led_board_red->write_value(false);
-		led_board_yel->write_value(false);
-	}
-	*/
 	
+		
 	SPDLOG_INFO("update() true");
 	return true;
+}
+
+/***********************************************************
+***********************************************************/
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+int _do_reboot() noexcept
+{
+	pid_t pid;
+	int status;
+	int rc;
+	
+	
+	//---プロセスの複製
+	//
+	pid = fork();
+	if (pid < 0)
+	{
+		SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
+		return -1;
+	} 
+	else
+	if(pid == 0) 
+	{
+		//---shutdownプロセス実行
+		//
+		execl("/sbin/shutdown", "/sbin/shutdown", "-r", "now", nullptr);
+		SPDLOG_ERROR("Failed to exec reboot.");
+		exit(-1);
+	}
+	
+	
+	//---shutdownプロセス完了までwait
+	//
+	waitpid(pid, &status, 0);
+	
+	if (!WIFEXITED(status)) {
+		return -1;
+	}
+	
+	rc = WEXITSTATUS(status);
+	
+	return rc;
+}
+
+#ifdef G_OS_UNIX
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+static gboolean callback_signal_user1(gpointer udata)
+{
+	SPDLOG_INFO("SIGUSER1 receiverd.");
+	callback_data_t* data = static_cast<callback_data_t*>(udata);
+	
+	//video_send_message(static_cast<GstElement*>(*data->pipeline));
+	data->interrupted.store(true, std::memory_order_relaxed);
+	data->b_reboot = true;
+	
+	//data->logger->write("L リブート");
+	/* remove signal handler */
+	data->signal_user1_id = 0;
+	return G_SOURCE_REMOVE;
+}
+
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+static gboolean callback_signal_user2(gpointer udata)
+{
+	SPDLOG_INFO("SIGUSER2 receiverd.");
+	callback_data_t* data = static_cast<callback_data_t*>(udata);
+	
+	return G_SOURCE_CONTINUE;
+}
+
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+static gboolean callback_signal_intr(gpointer udata)
+{
+	SPDLOG_INFO("SIGINTR receiverd.");
+	
+	callback_data_t* data = static_cast<callback_data_t*>(udata);
+	
+	//video_send_message(static_cast<GstElement*>(*data->pipeline));
+	data->interrupted.store(true, std::memory_order_relaxed);
+	/* remove signal handler */
+	data->signal_int_id = 0;
+	return G_SOURCE_REMOVE;
+}
+
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+static gboolean callback_signal_term(gpointer udata)
+{
+	SPDLOG_INFO("SIGTERM receiverd.");
+	
+	callback_data_t* data = static_cast<callback_data_t*>(udata);
+	
+	//video_send_message(static_cast<GstElement*>(*data->pipeline));
+	data->interrupted.store(true, std::memory_order_relaxed);
+	
+	/* remove signal handler */
+	data->signal_term_id = 0;
+	return G_SOURCE_REMOVE;
+}
+
+
+#endif
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+static bool wait_power_pin(std::shared_ptr<nvr::gpio_in> pm, callback_data_t *data)
+{
+	sigset_t mask;
+	sigset_t old_mask;
+	
+	bool ret = false;
+	int epfd = -1;
+	int sfd = -1;
+	int fd = pm->fd();
+	unsigned char buf[1];
+	struct epoll_event ev;
+	struct epoll_event events;
+	bool first = true;
+	
+	sigemptyset (&mask);
+	sigaddset (&mask, SIGINT);
+	sigaddset (&mask, SIGTERM);
+	sigaddset (&mask, SIGUSR1);
+	sigaddset (&mask, SIGUSR2);
+	
+	/**********************************************************/
+	//アップローダーに持っていく
+	/**********************************************************/
+	if (sigprocmask (SIG_BLOCK, &mask, nullptr) == -1) {
+		SPDLOG_ERROR("Failed to sigprocmask: {}", strerror(errno));
+		return ret;
+	}
+	
+	sfd = signalfd (-1, &mask, SFD_NONBLOCK|SFD_CLOEXEC);
+	if (sfd == -1){
+		SPDLOG_ERROR("Failed to signalfd: {}", strerror(errno));
+		goto END;
+	}
+	
+	epfd = epoll_create1(EPOLL_CLOEXEC);
+	if (epfd == -1) {
+		SPDLOG_ERROR("Failed to epoll_create1: {}", strerror(errno));
+		goto END;
+	}
+	
+	ev.events = EPOLLIN;
+	ev.data.fd = sfd;
+	
+	if (epoll_ctl(epfd, EPOLL_CTL_ADD, sfd, &ev)) {
+		SPDLOG_ERROR("Faild to add signal fd to epfs: {}", strerror(errno));
+		goto END;
+	}
+	
+	/**********************************************************/
+	while (true)
+	{
+		int rc;
+		rc = epoll_wait(epfd, &events, 1, 1000);
+		
+		if (rc > 0)
+		{
+			struct signalfd_siginfo info = {0};
+			
+			::read (sfd, &info, sizeof(info));
+			SPDLOG_INFO("Got signal {}", info.ssi_signo);
+			
+			if (info.ssi_signo == SIGINT || info.ssi_signo == SIGTERM) 
+			{
+				data->interrupted.store(true, std::memory_order_relaxed);
+				ret = true;
+				break;
+			} 
+			else 
+			if (info.ssi_signo == SIGUSR1)
+			{	
+				data->interrupted.store(true, std::memory_order_relaxed);
+				data->b_reboot = true;
+				ret = true;
+				break;
+			}
+			else
+			if (info.ssi_signo == SIGUSR2) 
+			{
+				//---restartをコマンド実行
+				//
+				nvr::do_systemctl("restart", "systemd-networkd");
+			}
+		}
+		
+		if (rc == 0)
+		{
+			if (data->is_power_pin_high.load(std::memory_order_relaxed))
+			{
+				break;
+			}
+			else
+			if(first)
+			{
+				SPDLOG_INFO("Wait power pin to be high.");
+				first = false;
+			}
+		}
+	}
+	
+END:
+	if (epfd != -1) {
+		close(epfd);
+	}
+	
+	if (sfd != -1) {
+		close(sfd);
+	}
+	
+	sigprocmask (SIG_UNBLOCK, &mask, nullptr);
+	
+	return ret;
+}
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+static void thread_gpio_power(callback_data_t *data)
+{
+	int fd = data->gpio_power->fd();
+	int epfd = epoll_create1(EPOLL_CLOEXEC);
+	struct epoll_event ev;
+	struct epoll_event events;
+	struct ifreq ifr;
+	ev.events = EPOLLPRI;
+	ev.data.fd = fd;
+	
+	
+	if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev)) {
+		SPDLOG_ERROR("Faild to add fd to epfs: {}", strerror(errno));
+	}
+	
+	
+	//---割り込みが来るまで実行
+	//
+	while (!data->interrupted.load(std::memory_order_relaxed)) 
+	{
+		if (!data->is_power_pin_high.load(std::memory_order_relaxed))
+		{
+			char buf[1];
+			lseek(fd, 0, SEEK_SET);
+			
+			if (::read(fd, buf, 1) == 1)
+			{
+				SPDLOG_DEBUG("power pin :{}", buf[0]);
+				
+				if (buf[0] == '1') {
+					data->is_power_pin_high.store(true, std::memory_order_relaxed);           
+				}
+			}
+			else
+			{
+				SPDLOG_ERROR("Failed to read power pin: {}", strerror(errno));
+			}
+		}
+		
+		if (epoll_wait(epfd, &events, 1, 1000) > 0)
+		{
+			::open("/dev/adv71800", O_RDONLY);
+			// ::open("/dev/adin0", O_RDONLY);
+			// ioctl(soc, SIOCSIFFLAGS, &ifr);
+			_do_reboot();
+			return;
+		}
+	}
 }
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
 int main(int argc, char **argv)
 {
+	callback_data_t data{};
+	GMainLoop *main_loop;
+
+	//GPIO 初期化
+	//
+	std::shared_ptr<nvr::gpio_in>	gpio_power    = std::make_shared<nvr::gpio_in >("224", "P13_0");
+
+	//--- 電源監視pin初期化
+	//
+	if (gpio_power->open_with_edge()) {
+		SPDLOG_ERROR("Failed to open gpio_power");
+		exit(-1);
+	}
+	
+	
 	//--- init
 	//
 	
@@ -488,8 +784,34 @@ int main(int argc, char **argv)
 		exit(-1);
 	}
 	
-	update();
-	execute();
+	
+	std::thread thread_power_monitior;
+	
+	
+	//---電源監視スレッドの作成
+	//
+	
+	thread_power_monitior = std::thread(thread_gpio_power, &data);
+	if (wait_power_pin(gpio_power, &data)) {
+		goto END;
+	}
+	
+	
+	//--- 電源監視の優先度を上げる。
+	//
+	struct sched_param param;
+	param.sched_priority = std::max(sched_get_priority_max(SCHED_FIFO) / 3, sched_get_priority_min(SCHED_FIFO));
+	if (pthread_setschedparam(thread_power_monitior.native_handle(), SCHED_FIFO, &param) != 0) {
+		SPDLOG_WARN("Failed to thread_power_monitior scheduler.");
+	}
+	
+	
+	//--- callback_data_tにポインタvーセット
+	//
+	data.logger			= logger;
+	
+	//update();
+	//execute();
 	
 	
 	//--- timer start
@@ -508,19 +830,32 @@ int main(int argc, char **argv)
 	
 	//---メインループ 作成
 	//
-	GMainLoop *main_loop = g_main_loop_new(NULL, FALSE);
+	main_loop = g_main_loop_new(NULL, FALSE);
 	
 	
 	//---console input enable(メインループをコンソールからkillするため)
     //
 	signal_int_id  = g_unix_signal_add(SIGINT, G_SOURCE_FUNC(signal_intr_cb), main_loop);
 	signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), main_loop);
+#ifdef G_OS_UNIX
+	data.signal_int_id   = g_unix_signal_add(SIGINT,  G_SOURCE_FUNC(callback_signal_intr), &data);
+	data.signal_term_id  = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(callback_signal_term), &data);
+	data.signal_user1_id = g_unix_signal_add(SIGUSR1, G_SOURCE_FUNC(callback_signal_user1), &data);
+	data.signal_user2_id = g_unix_signal_add(SIGUSR2, G_SOURCE_FUNC(callback_signal_user2), &data);
+#endif
 	
 	
 	//---メインループ 実行
 	//
 	g_main_loop_run(main_loop);
 	
+	
+END:
+	
+	if( thread_power_monitior.joinable() )
+	{
+		thread_power_monitior.join();
+	}
 	
 	//---プロセス 終了処理
     //
@@ -542,6 +877,30 @@ int main(int argc, char **argv)
 		g_source_remove(signal_term_id);
 	}
 	
+#ifdef G_OS_UNIX
+	if (data.signal_int_id)
+	{
+		g_source_remove(data.signal_int_id);
+	}
+	if (data.signal_term_id)
+	{
+		g_source_remove(data.signal_term_id);
+	}
+	if (data.signal_user1_id)
+	{
+		g_source_remove(data.signal_user1_id);
+	}
+	if (data.signal_user2_id)
+	{
+		g_source_remove(data.signal_user2_id);
+	}
+#endif
+	
+	if (data.b_reboot) {
+		std::this_thread::sleep_for(std::chrono::seconds(1));
+		_do_reboot();
+	}
+	
 	std::exit(0);
 	
 }
@@ -549,6 +908,7 @@ int main(int argc, char **argv)
 /***********************************************************
 	end of file
 ***********************************************************/
+
 
 
 

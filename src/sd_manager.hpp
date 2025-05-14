@@ -51,7 +51,11 @@ namespace nvr {
         uint64_t get_sector_count();
         int unmount_sd();
         int mount_sd();
-        
+        inline bool is_device_file_exists() noexcept        
+        {
+            std::error_code ec;
+            return std::filesystem::exists(device_file_, ec);
+        }
 
         // int sync_dir(const std::filesystem::path& path);
     private:
@@ -60,13 +64,6 @@ namespace nvr {
         bool wait_update();
         void format_process();
         void update_process();
-
-        
-        inline bool is_device_file_exists() noexcept
-        {
-            std::error_code ec;
-            return std::filesystem::exists(device_file_, ec);
-        }
 
         inline bool is_update_file_exists() noexcept
         {
@@ -103,6 +100,7 @@ namespace nvr {
 }
 
 #endif
+
 
 
 

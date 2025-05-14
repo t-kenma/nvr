@@ -25,6 +25,7 @@ class usb_raw_gadget
         int ep0_read(struct usb_raw_ep_io *io);
         void ep0_stall(void);
         int ep_enable(struct usb_endpoint_descriptor *desc);
+		int ep_disable(int ep);
         int ep_write(struct usb_raw_ep_io *io);
         int ep_read(struct usb_raw_ep_io *io);
         void vbus_draw(uint32_t bMaxPower);
