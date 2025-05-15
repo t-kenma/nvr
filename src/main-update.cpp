@@ -73,6 +73,8 @@ bool get_update_file( char* name );
 bool get_execute_file( char* name );
 bool execute();
 bool update();
+int _do_reboot() noexcept;
+bool update_ok = false;
 
 /***********************************************************
 ***********************************************************/
@@ -88,13 +90,26 @@ static gboolean timer1_cb(gpointer udata)
 	
 	//gpio_power_check(&data);
 	
-	 guchar new_value;
+	guchar new_value;
 	data->gpio_power-> read_value(&new_value);
 	SPDLOG_INFO("power pin = {}",new_value);
+	if( update_ok )
+	{
+		SPDLOG_INFO("update_ok");
+		if(is_sd_card())
+		{
+			_do_reboot();
+		}
+		
+		
+		return G_SOURCE_CONTINUE;
+	}
 	
 	if( update() == true )
 	{
-		execute();
+		//---SD抜き待ち
+		//
+		update_ok = true;
 	}
 	
 	return G_SOURCE_CONTINUE;
@@ -593,6 +608,7 @@ static bool wait_power_pin(std::shared_ptr<nvr::gpio_in> pm, callback_data_t *da
 	struct epoll_event ev;
 	struct epoll_event events;
 	bool first = true;
+	guchar new_value;
 	
 	sigemptyset (&mask);
 	sigaddset (&mask, SIGINT);
@@ -666,7 +682,8 @@ static bool wait_power_pin(std::shared_ptr<nvr::gpio_in> pm, callback_data_t *da
 		
 		if (rc == 0)
 		{
-			if (data->is_power_pin_high.load(std::memory_order_relaxed))
+			data->gpio_power-> read_value(&new_value);
+			if (new_value == '1') 
 			{
 				break;
 			}
