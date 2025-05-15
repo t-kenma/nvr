@@ -81,9 +81,17 @@ bool update();
 ----------------------------------------------------------*/
 static gboolean timer1_cb(gpointer udata) 
 {
+	callback_data_t *data = static_cast<callback_data_t *>(udata);
 	//1000ms タイマー処理
 	//
 	SPDLOG_INFO("timer on");
+	
+	//gpio_power_check(&data);
+	
+	 guchar new_value;
+	data->gpio_power-> read_value(&new_value);
+	SPDLOG_INFO("power pin = {}",new_value);
+	
 	if( update() == true )
 	{
 		execute();
@@ -687,6 +695,7 @@ END:
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
+/*
 static void gpio_power_check(callback_data_t *data)
 {
 	int fd = data->gpio_power->fd();
@@ -696,46 +705,45 @@ static void gpio_power_check(callback_data_t *data)
 	struct ifreq ifr;
 	ev.events = EPOLLPRI;
 	ev.data.fd = fd;
-	
+	guchar new_value;
 	
 	if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev)) {
 		SPDLOG_ERROR("Faild to add fd to epfs: {}", strerror(errno));
 	}
 	
-	
 	//---割り込みが来るまで実行
 	//
-	while (!data->interrupted.load(std::memory_order_relaxed)) 
+	data->gpio_power-> read_value(&new_value);
+	
+	if (!data->is_power_pin_high.load(std::memory_order_relaxed))
 	{
-		if (!data->is_power_pin_high.load(std::memory_order_relaxed))
+		char buf[1];
+		lseek(fd, 0, SEEK_SET);
+		
+		if (::read(fd, buf, 1) == 1)
 		{
-			char buf[1];
-			lseek(fd, 0, SEEK_SET);
+			SPDLOG_DEBUG("power pin :{}", buf[0]);
 			
-			if (::read(fd, buf, 1) == 1)
-			{
-				SPDLOG_DEBUG("power pin :{}", buf[0]);
-				
-				if (buf[0] == '1') {
-					data->is_power_pin_high.store(true, std::memory_order_relaxed);           
-				}
-			}
-			else
-			{
-				SPDLOG_ERROR("Failed to read power pin: {}", strerror(errno));
+			if (buf[0] == '1') {
+				data->is_power_pin_high.store(true, std::memory_order_relaxed);           
 			}
 		}
-		
-		if (epoll_wait(epfd, &events, 1, 1000) > 0)
+		else
 		{
-			::open("/dev/adv71800", O_RDONLY);
-			// ::open("/dev/adin0", O_RDONLY);
-			// ioctl(soc, SIOCSIFFLAGS, &ifr);
-			_do_reboot();
-			return;
+			SPDLOG_ERROR("Failed to read power pin: {}", strerror(errno));
 		}
 	}
+	
+	if (epoll_wait(epfd, &events, 1, 1000) > 0)
+	{
+		::open("/dev/adv71800", O_RDONLY);
+		// ::open("/dev/adin0", O_RDONLY);
+		// ioctl(soc, SIOCSIFFLAGS, &ifr);
+		_do_reboot();
+		return;
+	}
 }
+*/
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
@@ -785,6 +793,12 @@ int main(int argc, char **argv)
 		exit(-1);
 	}
 	
+	if (gpio_power->open())
+	{
+		SPDLOG_ERROR("Failed to open led_board_yel.");
+		exit(-1);
+	}
+	
 	SPDLOG_INFO("LED END");
 		
 	//--- callback_data_tにポインタvーセット
@@ -812,7 +826,7 @@ int main(int argc, char **argv)
 	
 	//---メインループ 作成
 	//
-	SPDLOG_INFO("main loop start");
+
 	main_loop = g_main_loop_new(NULL, FALSE);
 	
 	
@@ -826,74 +840,21 @@ int main(int argc, char **argv)
 	data.signal_user1_id = g_unix_signal_add(SIGUSR1, G_SOURCE_FUNC(callback_signal_user1), &data);
 	data.signal_user2_id = g_unix_signal_add(SIGUSR2, G_SOURCE_FUNC(callback_signal_user2), &data);
 #endif
-	
-	std::thread thread_power_monitior;
-	
-	
-	//---電源監視スレッドの作成
-	//
-	SPDLOG_INFO("電源監視スレッドの作成");
-	//gpio_power_check(thread_gpio_power, &data);
-	
-	int fd = data.gpio_power->fd();
-	int epfd = epoll_create1(EPOLL_CLOEXEC);
-	struct epoll_event ev;
-	struct epoll_event events;
-	struct ifreq ifr;
-	ev.events = EPOLLPRI;
-	ev.data.fd = fd;
-	
-	
-	if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev)) {
-		SPDLOG_ERROR("Faild to add fd to epfs: {}", strerror(errno));
-	}
-	
-	
-	//---割り込みが来るまで実行
-	//
-	while (!data.interrupted.load(std::memory_order_relaxed)) 
-	{
-		if (!data.is_power_pin_high.load(std::memory_order_relaxed))
-		{
-			char buf[1];
-			lseek(fd, 0, SEEK_SET);
-			
-			if (::read(fd, buf, 1) == 1)
-			{
-				SPDLOG_DEBUG("power pin :{}", buf[0]);
-				
-				if (buf[0] == '1') {
-					data.is_power_pin_high.store(true, std::memory_order_relaxed);           
-				}
-			}
-			else
-			{
-				SPDLOG_ERROR("Failed to read power pin: {}", strerror(errno));
-			}
-		}
-		
-		if (epoll_wait(epfd, &events, 1, 1000) > 0)
-		{
-			::open("/dev/adv71800", O_RDONLY);
-			// ::open("/dev/adin0", O_RDONLY);
-			// ioctl(soc, SIOCSIFFLAGS, &ifr);
-			_do_reboot();
-		}
-	}
-	
+
+	SPDLOG_INFO("電源check");
+	if (wait_power_pin(gpio_power, &data)) {
+        goto END;
+    }
+    
 	SPDLOG_INFO("電源OK");
 		
 	//---メインループ 実行
 	//
+	SPDLOG_INFO("main loop start");
 	g_main_loop_run(main_loop);
 	
 	
 END:
-	
-	if( thread_power_monitior.joinable() )
-	{
-		thread_power_monitior.join();
-	}
 	
 	//---プロセス 終了処理
     //
