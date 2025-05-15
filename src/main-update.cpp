@@ -32,7 +32,6 @@ struct callback_data_t
 					    signal_user2_id(0),
 					    b_reboot(false),
 					    interrupted(false),
-						gpio_power(nullptr),
 					    is_power_pin_high(false)
 	{}
 	
@@ -62,7 +61,7 @@ nvr::gpio_out *led_board_red;
 nvr::gpio_out *led_board_yel;
 
 
-#define PATH_UPDATE		"/mnt/sd/bin/"
+#define PATH_UPDATE		"/mnt/sd"
 #define EXECUTE	"/usr/bin/nvr"
 
 
@@ -75,7 +74,7 @@ bool execute();
 bool update();
 int _do_reboot() noexcept;
 bool update_ok = false;
-
+bool check_power(callback_data_t *data);
 /***********************************************************
 ***********************************************************/
 
@@ -90,9 +89,9 @@ static gboolean timer1_cb(gpointer udata)
 	
 	//gpio_power_check(&data);
 	
-	guchar new_value;
-	data->gpio_power-> read_value(&new_value);
-	SPDLOG_INFO("power pin = {}",new_value);
+	check_power(data);
+	SPDLOG_INFO("timer on");
+	
 	if( update_ok )
 	{
 		SPDLOG_INFO("update_ok");
@@ -190,15 +189,42 @@ inline bool is_root_file_exists() noexcept
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
+bool check_power(callback_data_t *data)
+{
+
+	guchar value;
+	if (!data) {
+        SPDLOG_INFO("data is null");
+        return false;
+    }
+
+    if (!data->gpio_power) {
+        SPDLOG_INFO("data->gpio_power is null");
+        return false;
+    }
+    
+	data->gpio_power->read_value(&value);
+	SPDLOG_INFO("power pin = {}",value);
+	if (value == 1){
+		return false;
+	}
+
+	return true;
+}
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
 bool is_sd_card()
 {
 	if ( !check_proc_mounts() ){
 		return false;
 	}
 	
+	/*
 	if( !is_root_file_exists() ) {
 		return false;
 	}
+	*/
 	
 	return true;
 }
@@ -299,45 +325,47 @@ int uncompress_encrypted( const char* zip_path )
 bool get_update_file( char* name )
 {
 	SPDLOG_INFO("get_update_file()");
-	//const char *bin_dir = "/mnt/sd/bin"; 
 	const char *bin_dir = "/mnt/sd"; 
 	fs::path path(bin_dir);
 	std::error_code ec;	
 	
 	
-	//---/mnt/sd/bin ディレクトリの存在確認
+	//---/mnt/sd ディレクトリの存在確認
 	//
 	if (!fs::exists(path, ec)) {
 		SPDLOG_INFO("no dir");
 		return false;
 	}
 	
-	
-	//---binフォルダにアップデータファイルがあるかの確認
+	//---SDフォルダにアップデータフォルダ(鍵付きZIP)があるかの確認
 	//
 	for (const fs::directory_entry& x : fs::directory_iterator(PATH_UPDATE)) 
 	{
-		std::cout << x.path() << std::endl;
-		std::string filename = x.path().filename().string();
-		std::cout << filename << std::endl;
 		
-		int pos = filename.find("evc");
+		std::string filename = x.path().filename().string();
+		
+		int pos = filename.find("EVC");
 		std::cout << pos << std::endl;
 		
-		//ファイル名にnvrとついたファイルがあるかの確認(実行ファイル)
+		//ファイル名にEVCとついたファイルがあるかの確認(実行ファイル)
 		//
 		if(pos != 0){
 			continue;
 		}
+		std::cout << x.path() << std::endl;
+		std::cout << filename << std::endl;
 		
 		pos = filename.length() - filename.find(".zip");
-		if(pos != 3){
+		SPDLOG_INFO("isfile pos={}",pos);
+		if(pos != 4){
 			continue;
 		}
+		SPDLOG_INFO("ZIP");
 		
 		//最初に見つかったファイル名を返す
 		//
 		std::strcpy(name, filename.c_str());
+		SPDLOG_INFO("is update file");
 		return true;
 	}
 	
@@ -426,7 +454,7 @@ bool update()
 	//---SDカードの挿入確認
 	//
 	if( is_sd_card() == false ){
-		//SPDLOG_INFO("is_sd_card() false");
+		SPDLOG_INFO("is_sd_card() false");
 		return false;
 	}
 	
@@ -435,16 +463,14 @@ bool update()
 	//
 	char update_name[256]  = {0};
 	if( get_update_file( update_name ) == false ){
-		//SPDLOG_INFO("get_update_file() false");
+		SPDLOG_INFO("get_update_file() false");
 		return false;
 	}
 	
 
-		
-
-	
 	//--- プロセスを停止
 	//
+	/*
 	SPDLOG_INFO(" pid = {}",pid);
 	if( pid )
 	{
@@ -454,6 +480,7 @@ bool update()
 		waitpid(pid, &status, 0);
 		SPDLOG_INFO("PROCESS KILLED!!");
 	}
+	*/
 	
 	
 	//--- 実行ファイルを削除
@@ -619,17 +646,20 @@ static bool wait_power_pin(std::shared_ptr<nvr::gpio_in> pm, callback_data_t *da
 	/**********************************************************/
 	//アップローダーに持っていく
 	/**********************************************************/
+	SPDLOG_INFO("wait_power_pin");
 	if (sigprocmask (SIG_BLOCK, &mask, nullptr) == -1) {
 		SPDLOG_ERROR("Failed to sigprocmask: {}", strerror(errno));
 		return ret;
 	}
 	
+	SPDLOG_INFO("wait_power_pin 1");
 	sfd = signalfd (-1, &mask, SFD_NONBLOCK|SFD_CLOEXEC);
 	if (sfd == -1){
 		SPDLOG_ERROR("Failed to signalfd: {}", strerror(errno));
 		goto END;
 	}
 	
+	SPDLOG_INFO("wait_power_pin-2");
 	epfd = epoll_create1(EPOLL_CLOEXEC);
 	if (epfd == -1) {
 		SPDLOG_ERROR("Failed to epoll_create1: {}", strerror(errno));
@@ -639,6 +669,7 @@ static bool wait_power_pin(std::shared_ptr<nvr::gpio_in> pm, callback_data_t *da
 	ev.events = EPOLLIN;
 	ev.data.fd = sfd;
 	
+	SPDLOG_INFO("wait_power_pin-3");
 	if (epoll_ctl(epfd, EPOLL_CTL_ADD, sfd, &ev)) {
 		SPDLOG_ERROR("Faild to add signal fd to epfs: {}", strerror(errno));
 		goto END;
@@ -649,16 +680,17 @@ static bool wait_power_pin(std::shared_ptr<nvr::gpio_in> pm, callback_data_t *da
 	{
 		int rc;
 		rc = epoll_wait(epfd, &events, 1, 1000);
-		
+		SPDLOG_INFO("wait_power_pin-while");
 		if (rc > 0)
 		{
 			struct signalfd_siginfo info = {0};
-			
+			SPDLOG_INFO("wait_power_pin -4");
 			::read (sfd, &info, sizeof(info));
 			SPDLOG_INFO("Got signal {}", info.ssi_signo);
 			
 			if (info.ssi_signo == SIGINT || info.ssi_signo == SIGTERM) 
 			{
+				SPDLOG_INFO("wait_power_pin-5");
 				data->interrupted.store(true, std::memory_order_relaxed);
 				ret = true;
 				break;
@@ -666,6 +698,7 @@ static bool wait_power_pin(std::shared_ptr<nvr::gpio_in> pm, callback_data_t *da
 			else 
 			if (info.ssi_signo == SIGUSR1)
 			{	
+				SPDLOG_INFO("wait_power_pin-6");
 				data->interrupted.store(true, std::memory_order_relaxed);
 				data->b_reboot = true;
 				ret = true;
@@ -676,25 +709,34 @@ static bool wait_power_pin(std::shared_ptr<nvr::gpio_in> pm, callback_data_t *da
 			{
 				//---restartをコマンド実行
 				//
+				SPDLOG_INFO("wait_power_pin-7");
 				nvr::do_systemctl("restart", "systemd-networkd");
 			}
 		}
 		
 		if (rc == 0)
 		{
-			data->gpio_power-> read_value(&new_value);
+			SPDLOG_INFO("wait_power_pin-8");
+			pm->read_value(&new_value);
+			SPDLOG_INFO("wait_power_pin-10");
 			if (new_value == 1) 
 			{
+				SPDLOG_INFO("wait_power_pin-11");
 				break;
 			}
 			else
 			if(first)
 			{
+				SPDLOG_INFO("wait_power_pin-9");
 				SPDLOG_INFO("Wait power pin to be high.");
 				first = false;
 			}
 		}
+		SPDLOG_INFO("wait_power_pin-while end");
+		sleep(100);
 	}
+	
+	SPDLOG_INFO("wait_power_pin ok");
 	
 END:
 	if (epfd != -1) {
@@ -764,21 +806,24 @@ static void gpio_power_check(callback_data_t *data)
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
+int mount_sd()
+{
+    return mount(
+       "/dev/mmcblk1p1",
+		"/mnt/sd",
+        "vfat",
+        MS_NOATIME|MS_NOEXEC,
+        "errors=continue"
+    );
+}
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
 int main(int argc, char **argv)
 {
 	callback_data_t data{};
 	GMainLoop *main_loop;
 
-	//GPIO 初期化
-	//
-	std::shared_ptr<nvr::gpio_in>	gpio_power    = std::make_shared<nvr::gpio_in >("224", "P13_0");
-
-	//--- 電源監視pin初期化
-	//
-	if (gpio_power->open_with_edge()) {
-		SPDLOG_ERROR("Failed to open gpio_power");
-		exit(-1);
-	}
 	
 	
 	//--- init
@@ -787,6 +832,10 @@ int main(int argc, char **argv)
 	spdlog::set_level(spdlog::level::debug);
 	SPDLOG_INFO("main-update");
 	
+	
+	//GPIO 初期化
+	//
+	std::shared_ptr<nvr::gpio_in>	gpio_power    = std::make_shared<nvr::gpio_in >("224", "P13_0");
 	std::shared_ptr<nvr::gpio_out> led_board_green = std::make_shared<nvr::gpio_out>("193", "P9_1");
 	std::shared_ptr<nvr::gpio_out> led_board_red = std::make_shared<nvr::gpio_out>("200", "P10_0");
 	std::shared_ptr<nvr::gpio_out> led_board_yel = std::make_shared<nvr::gpio_out>("192", "P9_0");
@@ -816,15 +865,14 @@ int main(int argc, char **argv)
 		exit(-1);
 	}
 	
-	SPDLOG_INFO("LED END");
-		
+	
+	
+	SPDLOG_INFO("LED END");	
+	
 	//--- callback_data_tにポインタvーセット
 	//
-	data.logger			= logger;
-	
-	//update();
-	//execute();
-	
+	data.logger = logger;
+	data.gpio_power = gpio_power.get();
 	
 	//--- timer start
 	//
@@ -832,7 +880,7 @@ int main(int argc, char **argv)
 	timer1_id = g_timeout_add_full(G_PRIORITY_HIGH,				// 優先度
 									1000,						// タイマー周期 1000msec
 									G_SOURCE_FUNC(timer1_cb),	//
-									nullptr,					// 
+									 &data,						// 
 									nullptr);					// 
 	if (!timer1_id)
 	{
@@ -864,13 +912,16 @@ int main(int argc, char **argv)
     }
     
 	SPDLOG_INFO("電源OK");
-		
+	
+	mount_sd();
+	//update();
+	//execute();
+	
 	//---メインループ 実行
 	//
 	SPDLOG_INFO("main loop start");
 	g_main_loop_run(main_loop);
-	
-	
+		
 END:
 	
 	//---プロセス 終了処理
