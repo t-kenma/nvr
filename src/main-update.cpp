@@ -83,6 +83,7 @@ static gboolean timer1_cb(gpointer udata)
 {
 	//1000ms タイマー処理
 	//
+	SPDLOG_INFO("timer on");
 	if( update() == true )
 	{
 		execute();
@@ -784,28 +785,8 @@ int main(int argc, char **argv)
 		exit(-1);
 	}
 	
-	
-	std::thread thread_power_monitior;
-	
-	
-	//---電源監視スレッドの作成
-	//
-	
-	thread_power_monitior = std::thread(thread_gpio_power, &data);
-	if (wait_power_pin(gpio_power, &data)) {
-		goto END;
-	}
-	
-	
-	//--- 電源監視の優先度を上げる。
-	//
-	struct sched_param param;
-	param.sched_priority = std::max(sched_get_priority_max(SCHED_FIFO) / 3, sched_get_priority_min(SCHED_FIFO));
-	if (pthread_setschedparam(thread_power_monitior.native_handle(), SCHED_FIFO, &param) != 0) {
-		SPDLOG_WARN("Failed to thread_power_monitior scheduler.");
-	}
-	
-	
+	SPDLOG_INFO("LED END");
+		
 	//--- callback_data_tにポインタvーセット
 	//
 	data.logger			= logger;
@@ -816,6 +797,7 @@ int main(int argc, char **argv)
 	
 	//--- timer start
 	//
+	SPDLOG_INFO("ttimer start");
 	timer1_id = g_timeout_add_full(G_PRIORITY_HIGH,				// 優先度
 									1000,						// タイマー周期 1000msec
 									G_SOURCE_FUNC(timer1_cb),	//
@@ -830,6 +812,7 @@ int main(int argc, char **argv)
 	
 	//---メインループ 作成
 	//
+	SPDLOG_INFO("main loop start");
 	main_loop = g_main_loop_new(NULL, FALSE);
 	
 	
@@ -844,6 +827,26 @@ int main(int argc, char **argv)
 	data.signal_user2_id = g_unix_signal_add(SIGUSR2, G_SOURCE_FUNC(callback_signal_user2), &data);
 #endif
 	
+	std::thread thread_power_monitior;
+	
+	
+	//---電源監視スレッドの作成
+	//
+	SPDLOG_INFO("電源監視スレッドの作成");
+	thread_power_monitior = std::thread(thread_gpio_power, &data);
+	if (wait_power_pin(gpio_power, &data)) {
+		goto END;
+	}
+	
+	
+	//--- 電源監視の優先度を上げる。
+	//
+	SPDLOG_INFO("電源監視スレ");
+	struct sched_param param;
+	param.sched_priority = std::max(sched_get_priority_max(SCHED_FIFO) / 3, sched_get_priority_min(SCHED_FIFO));
+	if (pthread_setschedparam(thread_power_monitior.native_handle(), SCHED_FIFO, &param) != 0) {
+		SPDLOG_WARN("Failed to thread_power_monitior scheduler.");
+	}
 	
 	//---メインループ 実行
 	//
