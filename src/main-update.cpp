@@ -687,7 +687,7 @@ END:
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
-static void thread_gpio_power(callback_data_t *data)
+static void gpio_power_check(callback_data_t *data)
 {
 	int fd = data->gpio_power->fd();
 	int epfd = epoll_create1(EPOLL_CLOEXEC);
@@ -833,21 +833,56 @@ int main(int argc, char **argv)
 	//---電源監視スレッドの作成
 	//
 	SPDLOG_INFO("電源監視スレッドの作成");
-	thread_power_monitior = std::thread(thread_gpio_power, &data);
-	if (wait_power_pin(gpio_power, &data)) {
-		goto END;
+	//gpio_power_check(thread_gpio_power, &data);
+	
+	int fd = data.gpio_power->fd();
+	int epfd = epoll_create1(EPOLL_CLOEXEC);
+	struct epoll_event ev;
+	struct epoll_event events;
+	struct ifreq ifr;
+	ev.events = EPOLLPRI;
+	ev.data.fd = fd;
+	
+	
+	if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev)) {
+		SPDLOG_ERROR("Faild to add fd to epfs: {}", strerror(errno));
 	}
 	
 	
-	//--- 電源監視の優先度を上げる。
+	//---割り込みが来るまで実行
 	//
-	SPDLOG_INFO("電源監視スレ");
-	struct sched_param param;
-	param.sched_priority = std::max(sched_get_priority_max(SCHED_FIFO) / 3, sched_get_priority_min(SCHED_FIFO));
-	if (pthread_setschedparam(thread_power_monitior.native_handle(), SCHED_FIFO, &param) != 0) {
-		SPDLOG_WARN("Failed to thread_power_monitior scheduler.");
+	while (!data.interrupted.load(std::memory_order_relaxed)) 
+	{
+		if (!data.is_power_pin_high.load(std::memory_order_relaxed))
+		{
+			char buf[1];
+			lseek(fd, 0, SEEK_SET);
+			
+			if (::read(fd, buf, 1) == 1)
+			{
+				SPDLOG_DEBUG("power pin :{}", buf[0]);
+				
+				if (buf[0] == '1') {
+					data.is_power_pin_high.store(true, std::memory_order_relaxed);           
+				}
+			}
+			else
+			{
+				SPDLOG_ERROR("Failed to read power pin: {}", strerror(errno));
+			}
+		}
+		
+		if (epoll_wait(epfd, &events, 1, 1000) > 0)
+		{
+			::open("/dev/adv71800", O_RDONLY);
+			// ::open("/dev/adin0", O_RDONLY);
+			// ioctl(soc, SIOCSIFFLAGS, &ifr);
+			_do_reboot();
+		}
 	}
 	
+	SPDLOG_INFO("電源OK");
+		
 	//---メインループ 実行
 	//
 	g_main_loop_run(main_loop);
