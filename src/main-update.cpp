@@ -683,7 +683,7 @@ static bool wait_power_pin(std::shared_ptr<nvr::gpio_in> pm, callback_data_t *da
 		if (rc == 0)
 		{
 			data->gpio_power-> read_value(&new_value);
-			if (new_value == '1') 
+			if (new_value == 1) 
 			{
 				break;
 			}
