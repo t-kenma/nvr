@@ -976,7 +976,7 @@ static gboolean on_timer( gpointer udata )
 		(*p_cnt)--;
 	}
 
-	
+	/*
 	if( is_usb_connenct )
 	{
 		gst_element_set_state( static_cast<GstElement*>(*data->pipeline), GST_STATE_PAUSED );
@@ -985,6 +985,7 @@ static gboolean on_timer( gpointer udata )
 	{
 		gst_element_set_state( static_cast<GstElement*>(*data->pipeline), GST_STATE_PLAYING );
 	}
+	*/
 
 	
 	//--- システムエラー状態
