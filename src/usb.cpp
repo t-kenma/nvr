@@ -15,6 +15,7 @@
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
+#include <sys/wait.h>
 
 #ifdef G_OS_UNIX
 #include <glib-unix.h>
@@ -24,6 +25,9 @@
 
 #include <signal.h>
 
+#include "common.hpp"
+
+#include <math.h>
 
 #define STR_VER		"1.0"
 
@@ -138,6 +142,7 @@ struct usb_config_descriptors me56ps2_config_descriptors = {
     
 };
 
+
 const void *me56ps2_string_descriptors[STRING_DESCRIPTORS_NUM] = {
     &me56ps2_string_descriptor_0,
     &me56ps2_string_descriptor_1,
@@ -147,7 +152,8 @@ const void *me56ps2_string_descriptors[STRING_DESCRIPTORS_NUM] = {
 
 
 extern int _do_reboot();
-extern void set_broken_output( char on );
+extern void set_broken_output( bool on );
+extern bool usb_sd_access;
 
 namespace fs = std::filesystem;
 
@@ -158,7 +164,8 @@ namespace nvr
 
 	/*----------------------------------------------------------
 	----------------------------------------------------------*/
-	usb::usb()
+	usb::usb( std::shared_ptr<nvr::eeprom> eeprom )
+		: eeprom_( eeprom )
 	{
 		printf( "usb::usb()" );
 		
@@ -174,6 +181,7 @@ namespace nvr
 		g_usb->init(USB_SPEED_HIGH, driver, device);
 		g_usb->reset_eps();
 		SPDLOG_INFO("run");
+		connected = false;
 		g_usb->run();
 	}
 	
@@ -186,9 +194,9 @@ namespace nvr
 	
 	/*----------------------------------------------------------
 	----------------------------------------------------------*/
-    void usb::main_proc( void* arg )
+    void usb::main_proc( std::shared_ptr<nvr::usb> arg )
     {
-    	usb* u = (usb*)arg;
+    	std::shared_ptr<nvr::usb> u = arg;
 		u->event_usb_control_loop();
     }
 
@@ -325,8 +333,11 @@ namespace nvr
 		
 		// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
-	
-	
+		
+		
+		waitpid( -1, NULL, 0 );
+		
+		
 		// 300ms wait
 		std::this_thread::sleep_for( std::chrono::milliseconds( 300 ) );
 		
@@ -338,6 +349,8 @@ namespace nvr
 	----------------------------------------------------------*/
 	void usb::on_cmd_load_info( struct io_thread_args* p_thread_args, int rcv_len )
 	{
+		printf( "on_cmd_load_info()\n" );
+		
 		char req[rcv_len];
 		recv_bulk( p_thread_args, p_thread_args->handle_out2, req, rcv_len );
 		
@@ -347,20 +360,34 @@ namespace nvr
 		char path[2048];
 		sprintf( path, "/mnt/sd/EVC/REC_INF%d.dat", file_no ); 
 
+		printf( "path=%s\n", path );
+		
 		int len = 0;
 		char ret = 4;			// 4:OK, 3:NG
 		char *dat = NULL;
 		try
 		{
+			usb_sd_access = true;
+			
 			// REC_INF.DATからリード
 			std::ifstream ifs( (const char*)path, std::ios::binary );
 
 			ifs.seekg( 0, std::ios::end );
 			long long int size = ifs.tellg();
 			ifs.seekg( 0 );
+			
+			printf( "size=%lld\n", size );
 
 			dat = new char[size];
 			ifs.read( dat, size );
+			
+			len = (size < 64) ? size : 64;
+				
+			for( int i=0; i<len; i++ )
+			{
+				printf( "%02x ", dat[i] );
+			}
+			printf("\n");
 			
 			len = size;
 		}
@@ -384,6 +411,9 @@ namespace nvr
 		sts[0] = ret;					// ret
 		memcpy( &sts[1], &len, 4 );		// 応答データ長
 		
+		printf( "res = %02X %02X %02X %02X %02X \n", 
+				sts[0], sts[1], sts[2], sts[3], sts[4] );
+		
 		// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
 	}
@@ -400,6 +430,8 @@ namespace nvr
 		
 		try
 		{
+			usb_sd_access = true;
+
 			// REC_INF.DATからリード
 			std::ifstream ifs( (const char*)path, std::ios::binary );
 
@@ -407,8 +439,12 @@ namespace nvr
 			size = ifs.tellg();
 			ifs.seekg( 0 );
 
+			usb_sd_access = true;
+			
 			dat = new char[size];
 			ifs.read( dat, size );
+			
+			usb_sd_access = true;
 		}
 		catch( const std::exception& e )
 		{
@@ -429,7 +465,7 @@ namespace nvr
 		}
 		
 		delete dat;
-		
+		 
 		return count;
 	}
 	
@@ -484,6 +520,8 @@ namespace nvr
 			char *dat = NULL;
 			try
 			{
+				usb_sd_access = true;
+
 				// JPEG fileからリード
 				std::ifstream ifs( (const char*)path, std::ios::binary );
 
@@ -495,6 +533,8 @@ namespace nvr
 				ifs.read( dat, size );
 				
 				len = size;
+				
+				usb_sd_access = true;
 			}
 			catch( const std::exception& e )
 			{
@@ -503,6 +543,7 @@ namespace nvr
 			
 			char* res = dat;
 		
+			usb_sd_access = true;
 			
 			// 送信準備
 			if( len > 0 )
@@ -510,6 +551,7 @@ namespace nvr
 				send_bulk( p_thread_args, p_thread_args->handle_in2, res, len );
 			}
 			
+			usb_sd_access = true;
 			delete dat;
 		}
 		else
@@ -546,6 +588,8 @@ namespace nvr
 			char *dat = NULL;
 			try
 			{
+				usb_sd_access = true;
+				
 				// JPEG fileからリード
 				std::ifstream ifs( (const char*)path, std::ios::binary );
 
@@ -555,11 +599,15 @@ namespace nvr
 
 				dat = new char[size];
 				ifs.read( dat, size );
+				
+				usb_sd_access = true;
 			}
 			catch( const std::exception& e )
 			{
 				ret = 3;		// 3:NG
 			}
+			
+			usb_sd_access = true;
 			
 			if( size > 380 )
 			{
@@ -572,6 +620,9 @@ namespace nvr
 				
 				// 送信準備
 				send_bulk( p_thread_args, p_thread_args->handle_in2, res, len );
+				
+				usb_sd_access = true;
+				
 			}
 		}
 		else
@@ -608,6 +659,8 @@ namespace nvr
 			char *dat = NULL;
 			try
 			{
+				usb_sd_access = true;
+				
 				// JPEG fileからリード
 				std::ifstream ifs( (const char*)path, std::ios::binary );
 
@@ -617,11 +670,15 @@ namespace nvr
 
 				dat = new char[size];
 				ifs.read( dat, size );
+				
+				usb_sd_access = true;
 			}
 			catch( const std::exception& e )
 			{
 				ret = 3;		// 3:NG
 			}
+			
+			usb_sd_access = true;
 			
 			if( size > 380 )
 			{
@@ -636,6 +693,8 @@ namespace nvr
 				
 				// 送信準備
 				send_bulk( p_thread_args, p_thread_args->handle_in2, res, len );
+				
+				usb_sd_access = true;
 			}
 		}
 		else
@@ -662,6 +721,8 @@ namespace nvr
 		int dir1;
 		memcpy( &dir1, &req[0], 2 );
 		
+		usb_sd_access = true;
+		
 		// exist dir1
 		int len = 0;
 		char ret;
@@ -671,6 +732,8 @@ namespace nvr
 		fs::path fs_path( path );
 		std::error_code ec;
 
+		usb_sd_access = true;
+		
 		// ディレクトリの存在確認
 		if( fs::exists( fs_path, ec ) )
 		{
@@ -680,6 +743,8 @@ namespace nvr
 		{
 			ret = 3;	// 3:NG
 		}
+		
+		usb_sd_access = true;
 		
 		char sts[5];
 		sts[0] = ret;					// ret
@@ -696,11 +761,17 @@ namespace nvr
 		char req[rcv_len];
 		recv_bulk( p_thread_args, p_thread_args->handle_out2, req, rcv_len );
 		
+		usb_sd_access = true;
+		
 		int dir1;
 		memcpy( &dir1, &req[0], 2 );
 		
+		usb_sd_access = true;
+		
 		int dir2;
 		memcpy( &dir2, &req[2], 2 );
+		
+		usb_sd_access = true;
 		
 		// exist dir1 & dir2
 		int len = 0;
@@ -711,6 +782,8 @@ namespace nvr
 		fs::path fs_path( path );
 		std::error_code ec;
 
+		usb_sd_access = true;
+		
 		// ディレクトリの存在確認
 		if( fs::exists( fs_path, ec ) )
 		{
@@ -724,6 +797,8 @@ namespace nvr
 		char sts[5];
 		sts[0] = ret;					// ret
 		memcpy( &sts[1], &len, 4 );		// 応答データ長
+		
+		usb_sd_access = true;
 		
 		// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
@@ -736,14 +811,22 @@ namespace nvr
 		char req[rcv_len];
 		recv_bulk( p_thread_args, p_thread_args->handle_out2, req, rcv_len );
 		
+		usb_sd_access = true;
+		
 		int dir1;
 		memcpy( &dir1, &req[0], 2 );
+		
+		usb_sd_access = true;
 		
 		int dir2;
 		memcpy( &dir2, &req[2], 2 );
 		
+		usb_sd_access = true;
+		
 		int dir3;
 		memcpy( &dir3, &req[4], 2 );
+		
+		usb_sd_access = true;
 		
 		// exist dir1 & dir2 & dir3
 		int len = 0;
@@ -754,6 +837,8 @@ namespace nvr
 		fs::path fs_path( path );
 		std::error_code ec;
 
+		usb_sd_access = true;
+		
 		// ディレクトリの存在確認
 		if( fs::exists( fs_path, ec ) )
 		{
@@ -767,6 +852,7 @@ namespace nvr
 		char sts[5];
 		sts[0] = ret;					// ret
 		memcpy( &sts[1], &len, 4 );		// 応答データ長
+		usb_sd_access = true;
 		
 		// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
@@ -791,21 +877,34 @@ namespace nvr
 		char ret;
 		
 		char buf[32];
-		sprintf( buf, "date -s \"20%d%d-%d%d-%d%d %d%d:%d%d:%d%d\"", 
-				 (YY >> 4) & 0x0F, YY & 0x0F, 
-				 (MM >> 4) & 0x0F, MM & 0x0F, 
-				 (DD >> 4) & 0x0F, DD & 0x0F, 
-				 (hh >> 4) & 0x0F, hh & 0x0F, 
-				 (mm >> 4) & 0x0F, mm & 0x0F, 
-				 (ss >> 4) & 0x0F, ss & 0x0F );
+		sprintf( buf, "date -s \"20%02X/%02X/%02X %02X:%02X:%02X\"", 
+				 YY, MM, DD, hh, mm, ss );
 		
 		// set DATE
+		signal(SIGCHLD, SIG_DFL);
 		int rt = system( buf );
-		printf( "system( %s ) rt=%d \n", buf, rt );
-		if( rt >= 0 )
+		
+		time_t tme = time( NULL );
+		struct tm* _tm = localtime( &tme ); 
+		
+		unsigned char Y = ::nvr::BcdToByte( YY ); 
+		unsigned char M = ::nvr::BcdToByte( MM );
+		unsigned char D = ::nvr::BcdToByte( DD );
+		unsigned char h = ::nvr::BcdToByte( hh );
+		unsigned char m = ::nvr::BcdToByte( mm );
+		unsigned char s = ::nvr::BcdToByte( ss );
+		
+		//if( rt >= 0 )
+		if( (Y == _tm->tm_year % 100) && 	// 年 [1900からの経過年数]
+			(M == _tm->tm_mon + 1)    && 	// 月 [0-11] 0から始まることに注意
+			(D == _tm->tm_mday)		  && 	// 日 [1-31]
+			(h == _tm->tm_hour)		  && 	// 時 [0-23]
+			(m == _tm->tm_min)		  && 	// 分 [0-59]
+			(s == _tm->tm_sec) )			// 秒 [0-61] 最大2秒までのうるう秒を考慮
 		{
-			rt = system( "hwclock --hctosys" );
-			printf( "system( \"hwclock --hctosys\" ) rt=%d \n", rt );
+			signal(SIGCHLD, SIG_DFL);
+			rt = system( "hwclock --systohc" );
+			printf( "system( \"hwclock --systohc\" ) rt=%d \n", rt );
 			if( rt >= 0 )
 			{
 				ret = 4;	// 4:OK
@@ -832,26 +931,24 @@ namespace nvr
 	----------------------------------------------------------*/
 	void usb::on_cmd_get_rtc( struct io_thread_args* p_thread_args, int rcv_len )
 	{
-		auto tp = std::chrono::system_clock::now();
-		auto duration = tp.time_since_epoch();
-		auto msec = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
-		long int sec1 = msec / 1000;
-		struct tm* lt = localtime( &sec1 );
-		int Y = lt->tm_year % 100;	// 年 [1900からの経過年数] : (Y + 1900) % 100 = Y
-		int M = lt->tm_mon + 1;		// 月 [0-11] 0から始まることに注意
-		int D = lt->tm_mday;		// 日 [1-31]
-		int h = lt->tm_hour;		// 時 [0-23]
-		int m = lt->tm_min;			// 分 [0-59]
-		int s = lt->tm_sec;			// 秒 [0-61] 最大2秒までのうるう秒を考慮
+		time_t tme = time( NULL );
+		struct tm* _tm = localtime( &tme ); 
+
+		unsigned char Y = _tm->tm_year % 100;	// 年 [1900からの経過年数] : (Y + 1900) % 100 = Y
+		unsigned char M = _tm->tm_mon + 1;		// 月 [0-11] 0から始まることに注意
+		unsigned char D = _tm->tm_mday;			// 日 [1-31]
+		unsigned char h = _tm->tm_hour;			// 時 [0-23]
+		unsigned char m = _tm->tm_min;			// 分 [0-59]
+		unsigned char s = _tm->tm_sec;			// 秒 [0-61] 最大2秒までのうるう秒を考慮
 
 		int len = 6;
 		char res[6];
-		res[0] = ((Y / 10) << 4) | (Y % 10);	// YY(BCD)
-		res[1] = ((M / 10) << 4) | (M % 10);	// MM(BCD)
-		res[2] = ((D / 10) << 4) | (D % 10);	// DD(BCD)
-		res[3] = ((h / 10) << 4) | (h % 10);	// hh(BCD)
-		res[4] = ((m / 10) << 4) | (m % 10);	// mm(BCD)
-		res[5] = ((s / 10) << 4) | (s % 10);	// ss(BCD)
+		res[0] = ::nvr::ByteToBcd( Y );	// YY(BCD)
+		res[1] = ::nvr::ByteToBcd( M );	// MM(BCD)
+		res[2] = ::nvr::ByteToBcd( D );	// DD(BCD)
+		res[3] = ::nvr::ByteToBcd( h );	// hh(BCD)
+		res[4] = ::nvr::ByteToBcd( m );	// mm(BCD)
+		res[5] = ::nvr::ByteToBcd( s );	// ss(BCD)
 		
 
 		// 日時の送信準備
@@ -877,15 +974,36 @@ namespace nvr
 		int size = ((int)req[3] << 8) | req[2];
 		char* dat = &req[4];
 		
-		/// todo ////////////////////////////////
+		printf( "get_eeprom() addr=0x%x size=%d \n", addr, size );
+		
+		printf( "dat = " );
+		for( int i=0; i<size; i++ )
+		{
+			printf( "%02X ", dat[i] );
+		}
+		printf( "\n" );
+		
+		
 		// save EEPROM
+		char ret;
+		if( eeprom_->Write( addr, size, (unsigned char*)dat ) >= 0 )
+		{
+			ret = 4;
+		}
+		else
+		{
+			ret = 3;
+		}
 		
 		int len = 0;
 		char sts[5];
-		sts[0] = 4;						// 4:OK
+		sts[0] = ret;					// 4:OK
 		memcpy( &sts[1], &len, 4 );		// 応答データ長
 		
-		// ステータス応答
+		printf( "res = %02X %02X %02X %02X %02X \n", 
+			sts[0], sts[1], sts[2], sts[3], sts[4] );
+	
+	// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
 	}
 	
@@ -899,12 +1017,26 @@ namespace nvr
 		int addr = ((int)req[1] << 8) | req[0];
 		int size = ((int)req[3] << 8) | req[2];;
 		
+		printf( "get_eeprom() addr=0x%x size=%d \n", addr, size );
 		
 		// EEPROMからリード
 		char dat[size];
-		memset( dat, 0, size );
+		char ret;
+		if( eeprom_->Read( addr, size, (unsigned char*)dat ) >= 0 )
+		{
+			ret = 4;
+		}
+		else
+		{
+			ret = 3;
+		}
 		
-		
+		printf( "res = " );
+		for( int i=0; i<size; i++ )
+		{
+			printf( "%02X ", dat[i] );
+		}
+		printf( "\n" );
 		
 		int len = size;
 		char* res = dat;
@@ -914,8 +1046,11 @@ namespace nvr
 		
 		
 		char sts[5];
-		sts[0] = 4;						// 4:OK
+		sts[0] = ret;					// 4:OK
 		memcpy( &sts[1], &len, 4 );		// 応答データ長
+		
+		printf( "res = %02X %02X %02X %02X %02X \n", 
+				sts[0], sts[1], sts[2], sts[3], sts[4] );
 		
 		// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
@@ -954,9 +1089,6 @@ namespace nvr
 		
 		char* dat = &req[4];
 		
-		/// todo ////////////////////////////////
-		// save EEPROM
-		
 		int len = 0;
 		char sts[5];
 		sts[0] = 3;						// 3:NG
@@ -976,12 +1108,12 @@ namespace nvr
 		char dat = req[0];
 		
 		// set Broken outout
-		set_broken_output( dat );		// 0:normal, 1:broken Test
+		set_broken_output( dat != 0 );		// 0:normal, 1:broken Test
 		
 		int len = 0;
 		char sts[5];
-		sts[0] = 4;						// 4:OK
-		memcpy( &sts[1], &len, 4 );		// 応答データ長
+		sts[0] = 4;							// 4:OK
+		memcpy( &sts[1], &len, 4 );			// 応答データ長
 		
 		// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
@@ -1007,7 +1139,7 @@ namespace nvr
 	----------------------------------------------------------*/
 	void* usb::bulk_thread( void* arg )
 	{
-		usb* u = (usb*)arg; 
+		usb* u = (usb*)arg;
 		return u->_bulk_thread();
 	}
 	
@@ -1017,7 +1149,8 @@ namespace nvr
 	{
 		printf( "\n\n\n\n\n***  bulk_thread() start**\n" );
 		
-		
+		connected = true;
+                                 		
 		struct io_thread_args* p_thread_args = (struct io_thread_args*)&thread_args;
 		
 		char buf[128];
@@ -1070,7 +1203,9 @@ namespace nvr
 		}
 		
 		printf( "\n***  bulk_thread() end ***\n" );
-		set_broken_output( 0 );		// 0:normal, 1:broken Test
+		connected = false;
+                                 		
+		set_broken_output( false );		// 0:normal, 1:broken Test
 		
 		return NULL;
 	}
@@ -1103,19 +1238,6 @@ namespace nvr
 			{
 				pkt->header.length = 0;
 				return true;
-				
-				//pkt->data[0] = 0x09;
-				//pkt->data[1] = 0x04;
-				//pkt->data[2] = 0x00;
-				//pkt->data[3] = 0x00;
-				//pkt->data[4] = 0x04;
-				//pkt->data[5] = 0x00;
-				//pkt->data[6] = 0x00;
-				//pkt->data[7] = 0x00;
-				//pkt->data[8] = 0x00;
-				//pkt->data[9] = 0x09; 
-				//pkt->header.length = 10;
-				//return true;
 			}
 			
 			
@@ -1132,41 +1254,15 @@ namespace nvr
 				
 				pkt->header.length = 0;
 				return true;
-				
-				//pkt->data[0] = 0xFF;
-				//pkt->data[1] = 0x00;
-				//pkt->data[2] = 0x07;
-				//pkt->data[3] = 0x05;
-				//pkt->data[4] = 0x01;
-				//pkt->data[5] = 0x02;
-				//pkt->data[6] = 0x40;
-				//pkt->data[7] = 0x00;
-				//pkt->data[8] = 0xFF;
-				//pkt->data[9] = 0x07;
-				//pkt->header.length = 10;
-				//return true;
 			}
 			
 			if( descriptor_type == USB_DT_BOS )
 			{
-				pkt->header.length = 0;		//descs->bos_len;
+				pkt->header.length = 0;			//descs->bos_len;
 				return true;
 				
 				//*pkt->data         = 0x00;	//descs->bos;
 				//pkt->header.length = 1;		//descs->bos_len;
-				//return true;
-				
-				//pkt->data[0] = 0xFF;
-				//pkt->data[1] = 0x00;
-				//pkt->data[2] = 0x07;
-				//pkt->data[3] = 0x05;
-				//pkt->data[4] = 0x01;
-				//pkt->data[5] = 0x02;
-				//pkt->data[6] = 0x00;
-				//pkt->data[7] = 0x02;
-				//pkt->data[8] = 0x01;
-				//pkt->data[9] = 0x07;
-				//pkt->header.length = 10;
 				//return true;
 			}
 			
@@ -1204,96 +1300,80 @@ namespace nvr
 			SPDLOG_INFO("ep_enable");
 			usb->reset_eps();
 				
-			//for( int i = 0; i < 3; i++ )
-			//if( flag == 0 )
+			if( thread_args.handle_in1 >= 0 )
 			{
-				//flag = 1;
-				
-				//usb->ep_disable(  );
-				
-				
-				//SPDLOG_INFO("ep_enable skip");
-				
-				///*
-				if( thread_args.handle_in1 >= 0 )
+				usb->ep_disable( thread_args.handle_in1 );
+				thread_args.handle_in1 = -1;
+			}
+			{
+				printf( "\n\n\n\n*** call usb->ep_enable() in1 ***\n\n\n\n" );
+				int ep_num_bulk_in1 = usb->ep_enable( reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_in) );
+				if( ep_num_bulk_in1 >= 0 )
 				{
-					usb->ep_disable( thread_args.handle_in1 );
-					thread_args.handle_in1 = -1;
+					printf( "\n\n\n\n*** enable ep_num_bulk_in1 ***\n\n\n\n" );
+					thread_args.handle_in1 = ep_num_bulk_in1;
 				}
+				else
 				{
-					printf( "\n\n\n\n*** call usb->ep_enable() in1 ***\n\n\n\n" );
-					int ep_num_bulk_in1 = usb->ep_enable( reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_in) );
-					if( ep_num_bulk_in1 >= 0 )
-					{
-						printf( "\n\n\n\n*** enable ep_num_bulk_in1 ***\n\n\n\n" );
-						thread_args.handle_in1 = ep_num_bulk_in1;
-					}
-					else
-					{
-						printf( "\n\n\n\n***   failed usb->ep_enable() in1  ret=%d  errno=%d ***\n\n\n\n", ep_num_bulk_in1, errno );
-					}
+					printf( "\n\n\n\n***   failed usb->ep_enable() in1  ret=%d  errno=%d ***\n\n\n\n", ep_num_bulk_in1, errno );
 				}
+			}
+			
+			if( thread_args.handle_out1 >= 0 )
+			{
+				usb->ep_disable( thread_args.handle_out1 );
+				thread_args.handle_out1 = -1;
+			}
+			{
+				printf( "\n\n\n\n*** call usb->ep_enable() out1 ***\n\n\n\n" );
+				int ep_num_bulk_out1 = usb->ep_enable( reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_out) );
+				if( ep_num_bulk_out1 >= 0 )
+				{
+					printf( "\n\n\n\n*** enable ep_num_bulk_out1 ***\n\n\n\n" );
+					thread_args.handle_out1 = ep_num_bulk_out1;
+				}
+				else
+				{
+					printf( "\n\n\n\n***   failed usb->ep_enable() out1  vret=%d  errno=%d ***\n\n\n\n", ep_num_bulk_out1, errno );
+				}
+			}
 				
-				if( thread_args.handle_out1 >= 0 )
+			if( thread_args.handle_in2 >= 0 )
+			{
+				usb->ep_disable( thread_args.handle_in2 );
+				thread_args.handle_in2 = -1;
+			}
+			{
+				printf( "\n\n\n\n*** call usb->ep_enable() in2 ***\n\n\n\n" );
+				int ep_num_bulk_in2 = usb->ep_enable( reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_in2) );
+				if( ep_num_bulk_in2 >= 0 )
 				{
-					usb->ep_disable( thread_args.handle_out1 );
-					thread_args.handle_out1 = -1;
+					printf( "\n\n\n\n*** enable ep_num_bulk_in2 ***\n\n\n\n" );
+					thread_args.handle_in2 = ep_num_bulk_in2;
 				}
+				else
 				{
-					printf( "\n\n\n\n*** call usb->ep_enable() out1 ***\n\n\n\n" );
-					int ep_num_bulk_out1 = usb->ep_enable( reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_out) );
-					if( ep_num_bulk_out1 >= 0 )
-					{
-						printf( "\n\n\n\n*** enable ep_num_bulk_out1 ***\n\n\n\n" );
-						thread_args.handle_out1 = ep_num_bulk_out1;
-					}
-					else
-					{
-						printf( "\n\n\n\n***   failed usb->ep_enable() out1  vret=%d  errno=%d ***\n\n\n\n", ep_num_bulk_out1, errno );
-					}
+					printf( "\n\n\n\n***   failed usb->ep_enable() in2  ret=%d  errno=%d ***\n\n\n\n", ep_num_bulk_in2, errno );
 				}
-				 
-				if( thread_args.handle_in2 >= 0 )
+			}
+			
+			if( thread_args.handle_out2 >= 0 )
+			{
+				usb->ep_disable( thread_args.handle_out2 );
+				thread_args.handle_out2 = -1;
+			}
+			{
+				printf( "\n\n\n\n*** call usb->ep_enable() out2 ***\n\n\n\n" );
+				int ep_num_bulk_out2 = usb->ep_enable( reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_out2) );
+				if( ep_num_bulk_out2 >= 0 )
 				{
-					usb->ep_disable( thread_args.handle_in2 );
-					thread_args.handle_in2 = -1;
+					printf( "\n\n\n\n*** enable ep_num_bulk_out2 ***\n\n\n\n" );
+					thread_args.handle_out2 = ep_num_bulk_out2;
 				}
+				else
 				{
-					printf( "\n\n\n\n*** call usb->ep_enable() in2 ***\n\n\n\n" );
-					int ep_num_bulk_in2 = usb->ep_enable( reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_in2) );
-					if( ep_num_bulk_in2 >= 0 )
-					{
-						printf( "\n\n\n\n*** enable ep_num_bulk_in2 ***\n\n\n\n" );
-						thread_args.handle_in2 = ep_num_bulk_in2;
-					}
-					else
-					{
-						printf( "\n\n\n\n***   failed usb->ep_enable() in2  ret=%d  errno=%d ***\n\n\n\n", ep_num_bulk_in2, errno );
-					}
+					printf( "\n\n\n\n***   failed usb->ep_enable() out2  ret=%d  errno=%d ***\n\n\n\n", ep_num_bulk_out2, errno );
 				}
-				
-				if( thread_args.handle_out2 >= 0 )
-				{
-					usb->ep_disable( thread_args.handle_out2 );
-					thread_args.handle_out2 = -1;
-				}
-				{
-					printf( "\n\n\n\n*** call usb->ep_enable() out2 ***\n\n\n\n" );
-					int ep_num_bulk_out2 = usb->ep_enable( reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_out2) );
-					if( ep_num_bulk_out2 >= 0 )
-					{
-						printf( "\n\n\n\n*** enable ep_num_bulk_out2 ***\n\n\n\n" );
-						thread_args.handle_out2 = ep_num_bulk_out2;
-					}
-					else
-					{
-						printf( "\n\n\n\n***   failed usb->ep_enable() out2  ret=%d  errno=%d ***\n\n\n\n", ep_num_bulk_out2, errno );
-					}
-				}
-				//*/
-				
-				
-				
 			}
 			
 			
@@ -1303,7 +1383,6 @@ namespace nvr
 				(thread_args.handle_out2 >= 0) )
 			{
 				thread_args.usb = usb;
-		        //pthread_create( &threadr, NULL, bulk_thread, &thread_args );
 		        pthread_create( &threadr, NULL, bulk_thread, this );
 			}
 			

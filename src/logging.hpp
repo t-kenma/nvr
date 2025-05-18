@@ -10,45 +10,37 @@
 #include <filesystem>
 #include <thread>
 
-namespace nvr {
-    // int write_log(char type, bool on);
+#include "eeprom.hpp"
 
-    class logger
-    {
-    public:
-        logger(const char* path)
-            : path_(path),
-              max_file_size_(10 * 1024 * 1024), // 10M,
-              backup_count_(5)
-        {}
-        ~logger() = default;
-        logger(const logger&) = delete;
-        logger(logger&&) =delete;
 
-        int write(const char *ftm, ...);
+namespace nvr
+{
+	typedef struct
+	{
+		unsigned char Y;
+		unsigned char M;
+		unsigned char D;
+		unsigned char h;
+		unsigned char m;
+		unsigned char s;
+	} log_dt_t;
+	
 
-    private:
-        std::filesystem::path path_;
-        std::mutex mtx_;
-        off_t max_file_size_;
-        int backup_count_;
-    };
+	class logger
+	{
+	public:
+		logger( std::shared_ptr<nvr::eeprom> eeprom );
+		~logger() = default;
 
-    class locked_fp
-    {
-    public:
-        locked_fp(): fp_(nullptr), fd_(-1), locked_(false) {}
-        ~locked_fp();
-        locked_fp(const locked_fp&) = delete;
-        locked_fp(locked_fp&&) = delete;
+		int LogOut( unsigned char code );
+		int LogOut( unsigned char code, struct tm* _tm );
 
-        FILE* open(const std::filesystem::path& path) noexcept;
+	private:
+	std::shared_ptr<nvr::eeprom> eeprom_;
+		unsigned short logout_address_;
 
-        constexpr int fd() { return fd_; }
-    private:
-        FILE* fp_;
-        int fd_;
-        bool locked_;
-    };
+		void MakeLogData( unsigned char code, log_dt_t dt, unsigned char* buf );
+		void MakeLogData( unsigned char code, struct tm* _tm, unsigned char* buf );
+	};
 }
 #endif

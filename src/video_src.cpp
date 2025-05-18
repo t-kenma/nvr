@@ -51,7 +51,7 @@ namespace nvr {
             pipeline,
             "video_convert_caps",
             "video/x-raw",
-            "format", G_TYPE_STRING, "I420"
+            "format", G_TYPE_STRING, "UYVY"//"I420"
         );
 #else
         video_scale_caps_filter = caps_filter_element(

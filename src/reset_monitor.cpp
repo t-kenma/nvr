@@ -39,7 +39,7 @@ namespace nvr {
             } else if (state_ == 1 && value_ == 1 && count_ == 100) { // clear after 5sec.
                 state_ = 0;
             } else if (state_ == 1 && value_ == 0 && count_ == 60) { // reset after 3sec.
-                logger_->write("L リセットボタン ON");
+//                logger_->write("L リセットボタン ON");
                 state_ = 0;
             }             
         }

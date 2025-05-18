@@ -7,7 +7,7 @@ namespace nvr
     {
         gboolean ret = TRUE;
         element queue;
-        element jpeg_enc;
+//        element jpeg_enc;
         element jpeg_file_sink;
 
         queue = element(pipeline, "queue", "queue_jpeg");
@@ -23,12 +23,12 @@ namespace nvr
             );
         }
 
-        jpeg_enc = element(pipeline, "jpegenc", "jpeg_enc");
-        if (!jpeg_enc)
-        {
-            SPDLOG_ERROR("Failed to make jpeg_enc element.");
-            ret = FALSE;
-        }
+//        jpeg_enc = element(pipeline, "jpegenc", "jpeg_enc");
+//        if (!jpeg_enc)
+//        {
+//            SPDLOG_ERROR("Failed to make jpeg_enc element.");
+//            ret = FALSE;
+//        }
 
         jpeg_file_sink = element(pipeline, "multifilesink", "jpeg_file_sink");
         if (!jpeg_file_sink)
@@ -51,7 +51,7 @@ namespace nvr
 
         ret = gst_element_link_many(
             static_cast<GstElement*>(queue_),
-            static_cast<GstElement*>(jpeg_enc),
+//            static_cast<GstElement*>(jpeg_enc),
             static_cast<GstElement*>(jpeg_file_sink),
             nullptr
         );

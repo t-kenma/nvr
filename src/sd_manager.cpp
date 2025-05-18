@@ -83,7 +83,7 @@ namespace nvr {
             exit(-1);
         } else if (pid < 0) {
             SPDLOG_ERROR("Failed to fork format process: {}", strerror(errno));
-            logger_->write("E SDカードフォーマットエラー");
+ //           logger_->write("E SDカードフォーマットエラー");
             result = format_result_error;
             goto END;
         }
@@ -92,7 +92,7 @@ namespace nvr {
 
         if (!WIFEXITED(status)) {
             SPDLOG_ERROR("mkfs is not exited.");
-            logger_->write("E SDカードフォーマットエラー");
+//            logger_->write("E SDカードフォーマットエラー");
             result = format_result_error;
             goto END;
         }
@@ -101,7 +101,7 @@ namespace nvr {
         SPDLOG_DEBUG("End mkfs.vfat: {}", rc);
         if (rc != 0) {
             SPDLOG_ERROR("mkfs exit code: {}", rc);
-            logger_->write("E SDカードフォーマットエラー");
+//            logger_->write("E SDカードフォーマットエラー");
             result = format_result_error;
             goto END;
         }
@@ -109,7 +109,7 @@ namespace nvr {
         rc = mount_sd();
         if (rc) {
             SPDLOG_ERROR("Failed to mount sd: {}", strerror(errno));
-            logger_->write("E SDカードイニシャライズエラー");
+//            logger_->write("E SDカードイニシャライズエラー");
             result = format_result_error;
             goto END;
         }
@@ -117,7 +117,7 @@ namespace nvr {
         if (!is_root_file_exists()) {
             rc = create_root_file();
             if (rc) {
-                logger_->write("E SDカードイニシャライズエラー");
+//                logger_->write("E SDカードイニシャライズエラー");
                 result = format_result_error;
                 goto END;
             }

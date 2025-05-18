@@ -23,6 +23,8 @@ app_sources = [
     'src/usb_raw_control_event.cpp',
     'src/usb_raw_gadget.cpp',
     'src/usb.cpp',
+    'src/eeprom.cpp',
+    'src/common.cpp',
 ]
 
 update_sources = [
@@ -32,6 +34,8 @@ update_sources = [
     'src/sd_manager.cpp',
     'src/reset_monitor.cpp',
     'src/logging.cpp',
+    'src/eeprom.cpp',
+    'src/common.cpp',
 ]
 
 if host_machine.system() == 'darwin'
@@ -45,8 +49,10 @@ gst_dep = dependency('gstreamer-1.0', version : '>=1.16',
 
 thread_dep = dependency('threads')
 
-deps = [
-    gst_dep, thread_dep
+libjpeg_dep = dependency('libjpeg')
+
+deps = [ 
+    gst_dep, thread_dep, libjpeg_dep
 ]
 
 if host_machine.system() != 'darwin'
@@ -69,3 +75,4 @@ exe = executable(
 )
 
 test('basic', exe)
+

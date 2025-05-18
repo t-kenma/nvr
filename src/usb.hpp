@@ -5,6 +5,7 @@
 #include "usb_raw_gadget.hpp"
 #include "usb_raw_control_event.hpp"
 #include "usb_evc.hpp"
+#include "eeprom.hpp"
 
 struct io_thread_args
 {
@@ -21,16 +22,18 @@ namespace nvr
     class usb
     {
     public:
-        usb();
+        usb( std::shared_ptr<nvr::eeprom> eeprom );
         ~usb();
         
-        static void main_proc( void* arg );
+        static void main_proc( std::shared_ptr<nvr::usb> arg );
 		bool event_usb_control_loop();
 
 		static void* bulk_thread( void* arg );
 		void* _bulk_thread();
 
 		int th_end = 0;
+		
+		bool connected = false;
     
     private:
 		void debug_dump_data( const char* data, int length );
@@ -56,6 +59,8 @@ namespace nvr
 		void on_cmd_unknown( struct io_thread_args* p_thread_args, int rcv_len );
 
 		bool process_control_packet(usb_raw_gadget *usb, usb_raw_control_event *e, struct usb_packet_control *pkt);
+
+		std::shared_ptr<nvr::eeprom> eeprom_;
 
 		const char *driver = USB_RAW_GADGET_DRIVER_DEFAULT;
 		const char *device = USB_RAW_GADGET_DEVICE_DEFAULT;
