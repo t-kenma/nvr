@@ -1052,6 +1052,9 @@ static gboolean on_timer( gpointer udata )
 			{
 				formatting = false;
 				data->led->set_y( data->led->off );
+				ReadRecMax( &file_max );
+				ReadRecIndex( &file_idx );
+				
 			}
 			else
 			if (res == 2)	//---フォーマットerr
@@ -1641,7 +1644,8 @@ int main(int argc, char **argv)
 	spdlog::set_level(spdlog::level::debug);
 	
 	callback_data_t data{};
-	SPDLOG_INFO("ver0.1.4");
+	//SPDLOG_INFO("ver0.2.0");
+	std::cout << "ver0.2.0"<< std::endl;
 	
 	//GPIO 初期化
 	//

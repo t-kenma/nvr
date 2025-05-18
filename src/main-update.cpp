@@ -24,6 +24,9 @@
 #include "i2c.hpp"
 
 
+#define PATH_UPDATE		"/mnt/sd"
+#define EXECUTE			"/usr/bin/nvr"
+
 struct callback_data_t
 {
 	callback_data_t() : signal_int_id(0),
@@ -58,15 +61,10 @@ int g_mount_status = 0;
 guint signal_int_id;
 guint signal_term_id;
 guint timer1_id;
-pid_t pid = -1;     //初期化時は-1
-
-
-#define PATH_UPDATE		"/mnt/sd"
-#define EXECUTE			"/usr/bin/nvr"
+pid_t child = -1;     //初期化時は-1
 
 
 bool check_proc_mounts();
-inline bool is_root_file_exists()noexcept;
 bool is_sd_card();
 bool get_update_file( char* name );
 bool get_execute_file( char* name );
@@ -78,8 +76,6 @@ bool check_power(callback_data_t *data);
 bool check_cminsig(callback_data_t *data);
 int g_counter_ = 0;
 
-
-
 /***********************************************************
 ***********************************************************/
 
@@ -89,9 +85,8 @@ static gboolean timer1_cb(gpointer udata)
 {
 	callback_data_t *data = static_cast<callback_data_t *>(udata);
 	//1000ms タイマー処理
-	//
 	
-	//gpio_power_check(&data);
+	//
 	
 	check_power(data);
 
@@ -198,27 +193,6 @@ bool check_proc_mounts()
 }
 
 
-
-
-/*----------------------------------------------------------
-----------------------------------------------------------*/
-inline bool is_root_file_exists() noexcept
-{
-	std::error_code ec;
-
-	if (!fs::exists(inf1, ec)) {
-		SPDLOG_INFO("no inf1");
-		return false;
-	}
-
-	if (!fs::exists(inf2, ec)) {
-		SPDLOG_INFO("no inf2");
-		return false;
-	}
-
-	return true;
-}
-
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
 bool check_power(callback_data_t *data)
@@ -235,10 +209,29 @@ bool check_power(callback_data_t *data)
     }
     
 	data->gpio_power->read_value(&value);
-	
+	SPDLOG_INFO("power pin = {}",value);
 	if (value == 1){
 		return false;
 	}
+	
+	//log
+	//
+	
+	//main kill
+	//
+	if (child > 0) 
+	{
+	 	int status;
+		SPDLOG_INFO("PROCESS KILL...");
+		kill(child, SIGTERM);
+		waitpid(child, &status, 0);
+		SPDLOG_INFO("PROCESS KILLED!!");
+		child = -1;
+	} 
+	
+	
+	_do_reboot();
+      
 	SPDLOG_INFO("power pin = {}",value);
 	return true;
 }
@@ -408,9 +401,9 @@ bool execute()
 	
 	//---プロセスを複製し子プロセスを作成
 	//
-	pid = fork();
-	SPDLOG_INFO(" pid = {}",pid);
-	if (pid < 0) 
+	pid_t _pid = fork(); 
+	SPDLOG_INFO(" pid = {}",_pid);
+	if (_pid < 0) 
 	{
 		//---プロセスの複製失敗
 		//
@@ -418,11 +411,11 @@ bool execute()
 		return false;
 	} 
 	else
-	if( pid == 0) 
+	if( _pid == 0) 
 	{
 		//---子プロセス処理
 		//
-		SPDLOG_INFO(" child pid = {}",pid);
+		SPDLOG_INFO(" child pid = {}",_pid);
 		
 		
 		//実行ファイルを実行
@@ -437,8 +430,8 @@ bool execute()
 	}
     else 
     {
-        std::cout << "Parent process. Child PID = " << pid << std::endl;
-         //pid = getpid();
+        std::cout << "Parent process. Child PID = " << _pid << std::endl;
+        child = _pid;
     }
 
 	
@@ -468,15 +461,15 @@ bool update()
 	
 	//--- プロセスを停止
 	//
-	SPDLOG_INFO(" pid = {}",pid);
-	if( pid > 0 )
+	SPDLOG_INFO(" child = {}",child);
+	if( child > 0 )
 	{
 		int status;
 		SPDLOG_INFO("PROCESS KILL...");
-		kill(pid, SIGTERM);
-		waitpid(pid, &status, 0);
+		kill(child, SIGTERM);
+		waitpid(child, &status, 0);
 		SPDLOG_INFO("PROCESS KILLED!!");
-		pid = -1;
+		child = -1;
 	}
 	
 	
@@ -525,14 +518,14 @@ int _do_reboot() noexcept
 	
 	//---プロセスの複製
 	//
-	pid = fork();
+	_pid = fork();
 	if (_pid < 0)
 	{
 		SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
 		return -1;
 	} 
 	else
-	if(pid == 0) 
+	if(_pid == 0) 
 	{
 		//---shutdownプロセス実行
 		//
@@ -544,7 +537,7 @@ int _do_reboot() noexcept
 	
 	//---shutdownプロセス完了までwait
 	//
-	waitpid(pid, &status, 0);
+	waitpid(_pid, &status, 0);
 	
 	if (!WIFEXITED(status)) {
 		return -1;
@@ -877,10 +870,10 @@ END:
     //
     SPDLOG_INFO("main-update die");
 	int status;
-	if(pid)
+	if(child > 0)
 	{
-		kill(pid, SIGTERM);
-		waitpid(pid, &status, 0);
+		kill(child, SIGTERM);
+		waitpid(child, &status, 0);
 		SPDLOG_INFO("nvr kill");
 	}
 	
