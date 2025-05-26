@@ -6,6 +6,7 @@
 #include "usb_raw_control_event.hpp"
 #include "usb_evc.hpp"
 #include "eeprom.hpp"
+#include "logging.hpp"
 
 struct io_thread_args
 {
@@ -19,25 +20,27 @@ struct io_thread_args
 
 namespace nvr
 {
-    class usb
-    {
-    public:
-        usb( std::shared_ptr<nvr::eeprom> eeprom );
-        ~usb();
-        
-        static void main_proc( std::shared_ptr<nvr::usb> arg );
+	class usb
+	{
+	public:
+		usb( std::shared_ptr<nvr::eeprom> eeprom,std::shared_ptr<nvr::logger> logger );
+		~usb();
+		
+		static void main_proc( std::shared_ptr<nvr::usb> arg );
 		bool event_usb_control_loop();
-
+		
 		static void* bulk_thread( void* arg );
 		void* _bulk_thread();
-
+		
 		int th_end = 0;
 		
 		bool connected = false;
-    
-    private:
+		bool usb_sd_access = false;
+	
+	private:
 		void debug_dump_data( const char* data, int length );
 		int send_bulk( struct io_thread_args* p_thread_args, int ep_handle, char* data, int len );
+		int recv_bulk_ex( struct io_thread_args* p_thread_args, int ep_handle, char* data, int len, bool one );
 		int recv_bulk( struct io_thread_args* p_thread_args, int ep_handle, char* data, int len );
 		void on_cmd_load_info( struct io_thread_args* p_thread_args, int rcv_len );
 		void on_cmd_system_reset( struct io_thread_args* p_thread_args, int rcv_len );
@@ -57,27 +60,30 @@ namespace nvr
 		void on_cmd_update_fw( struct io_thread_args* p_thread_args, int rcv_len );
 		void on_cmd_broken_output_test( struct io_thread_args* p_thread_args, int rcv_len );
 		void on_cmd_unknown( struct io_thread_args* p_thread_args, int rcv_len );
-
+		
 		bool process_control_packet(usb_raw_gadget *usb, usb_raw_control_event *e, struct usb_packet_control *pkt);
-
+		
 		std::shared_ptr<nvr::eeprom> eeprom_;
-
+		std::shared_ptr<logger> logger_ = NULL;
+		
 		const char *driver = USB_RAW_GADGET_DRIVER_DEFAULT;
 		const char *device = USB_RAW_GADGET_DEVICE_DEFAULT;
 		
 		usb_raw_gadget *g_usb = NULL;
-
+		
 		struct io_thread_args thread_args;
-
+		
 		#define USB_MAX_PACKET_SIZE 4096
-
+		
 		struct usb_raw_ep_io_data
 		{
 			struct usb_raw_ep_io inner;
 			char data[USB_MAX_PACKET_SIZE];
 		};
-
+		
 		pthread_t threadr;
-    };
+		
+		char req_buf[512];
+	};
 }
 #endif

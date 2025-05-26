@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <time.h>
+#include <iostream>
 
 #define ADDR_SERIAL_NUMBER		0x0000		// 8 Byte
 #define ADDR_FILE_SIZE			0x0011		// 8 Byte
@@ -15,10 +16,11 @@
 #define ADDR_LOG_OUT_POINTER	0x1000		// 
 											// アドレス 2 Byte, ログデータ 0x1010～, 1ログ 16Byte, 最大500件
 
-#define RECORDCYC_DEF			100
+#define RECORDCYC_DEF			30
 #define LOG_START_NUBER			1
 #define LOG_MAX					500
-
+#define CHECK					48
+namespace fs = std::filesystem;
 namespace nvr
 {
 	/*------------------------------------------------------
@@ -42,7 +44,7 @@ namespace nvr
 	FILE* locked_fp::open( const std::filesystem::path& path ) noexcept
 	{
 		const char* p = path.c_str();
-		fp_ = fopen(p, "ae");
+		fp_ = fopen(p, "w+");
 		if( fp_ == nullptr )
 		{
 			SPDLOG_ERROR("Failed to open {}: {}", p, strerror(errno));
@@ -91,6 +93,8 @@ namespace nvr
 		
 		path_ = path;
 		
+		Load();
+		
 		unsigned char no[8];
 		Read_SNo( &no[0] );
 		Write( ADDR_SERIAL_NUMBER, 8, &no[0] );
@@ -98,8 +102,8 @@ namespace nvr
 		unsigned int rec_cyc;
 		unsigned int com_rec_cyc;
 		Read_RecordCyc( &rec_cyc, &com_rec_cyc );
-		unsigned char redata = com_rec_cyc;
-		Write( ADDR_RECORD_CYCLE, 1, &redata );
+		//unsigned char redata = com_rec_cyc;
+		//Write( ADDR_RECORD_CYCLE, 1, &redata );
 		
 		unsigned char size;
 		Read_FSize( &size );
@@ -117,7 +121,7 @@ namespace nvr
 			return -1;
 		}
 		
-		FILE *fp = fopen( p, "ae" );
+		FILE *fp = fopen( p, "r" );
 		
 		if( fp == NULL )
 		{
@@ -128,6 +132,14 @@ namespace nvr
 		
 		fclose( fp );
 		
+//		SPDLOG_INFO(" eeprom::Load() {}");
+//		printf( "eeprom = " );
+//		for( int i=0; i<CHECK; i++ )
+//		{
+//			printf( "%02X ", mem_[i] );
+//		}
+//		printf( "\n" );
+		
 		return 0;
 	}
 	
@@ -137,27 +149,71 @@ namespace nvr
 	{
 		int ret = 1;
 		FILE *fp = nullptr;
+		
+		int res = 100;
+		std::error_code ec;
 
 		do
 		{
 			std::lock_guard<std::mutex> lock(mtx_);
 			const char* path = path_.c_str();
+			//const char* path = "/etc/nvr/eeprom2.dat";
 			locked_fp lfp;
 
-			fp = lfp.open( path_ );
+//			SPDLOG_INFO(" eeprom::Save() path = {}",path);
+			fp = lfp.open( path );
 			if( fp == nullptr )
 			{
 				ret = -1;
 				break;
 			}
 
-			fwrite( mem_, 1, MEM_SIZE, fp );
-			fflush( fp );
-
+//			SPDLOG_INFO(" eeprom::Save()");
+			res = fwrite( mem_, 1, MEM_SIZE, fp );
+//			SPDLOG_INFO(" eeprom::fwrite() = {}", res);
+			res = fflush( fp );
+//			SPDLOG_INFO(" eeprom::fflush() = {}", res);
 			ret = 0;
 		
 		} while(ret == 1);
-
+		
+		
+		//---ファイルの同期
+		//
+		try 
+		{
+			int fd = ::open(path_.c_str(), O_WRONLY);
+			if (fd != -1)
+			{
+				::fsync(fd);
+				::close(fd);
+			}
+		}
+		catch (const fs::filesystem_error& e) 
+		{
+			std::cerr << "sync失敗: " << e.what() << '\n';
+			return -1;
+		}
+		
+		
+//		printf( "eeprom = " );
+//		for( int i=0; i<CHECK; i++ )
+//		{
+//			printf( "%02X ", mem_[i] );
+//		}
+//		printf( "\n" );
+		
+		/*
+		Load();
+		
+		printf( "after load = " );
+		for( int i=0; i<CHECK; i++ )
+		{
+			printf( "%02X ", mem_[i] );
+		}
+		printf( "\n" );
+		*/
+		
 		return ret;
 	}
 	
@@ -165,7 +221,23 @@ namespace nvr
 	------------------------------------------------------*/
 	int eeprom::Read( unsigned short addr, unsigned short len, unsigned char* data )
 	{
+//		SPDLOG_INFO(" eeprom::Read()");
+		
+//		printf( "eeprom = " );
+//		for( int i=0; i<len; i++ )
+//		{
+//			printf( "%02X ", mem_[addr + i] );
+//		}
+//		printf( "\n" );
+		
 		memcpy( data, &mem_[addr], len );
+		
+//		printf( "DATA = " );
+//		for( int i=0; i<len; i++ )
+//		{
+//			printf( "%02X ", data[i] );
+//		}
+//		printf( "\n" );
 		
 		return 0;
 	}
@@ -174,31 +246,49 @@ namespace nvr
 	------------------------------------------------------*/
 	int eeprom::Write( unsigned short addr, unsigned short len, unsigned char* data )
 	{
+//		SPDLOG_INFO(" eeprom::Write()");
+//		printf( "DATA = " );
+//		for( int i=0; i<len; i++ )
+//		{
+//			printf( "%02X ", data[i] );
+//		}
+//		printf( "\n" );
+		
 		memcpy( &mem_[addr], data, len );
+		
+//		printf( "eeprom = " );
+//		for( int i=0; i<len; i++ )
+//		{
+//			printf( "%02X ", mem_[addr + i] );
+//		}
+//		printf( "\n" );
+		
 		return Save();
 	}
 	
 	
 	/********************************************************************************/
 	/* 関数名称	：	Read_RecordCyc													*/
-	/* 概要		：	録画周期														*/
+	/* 概要		：	録画周期															*/
 	/********************************************************************************/
 	int eeprom::Read_RecordCyc( unsigned int* rec_cyc, unsigned int* com_rec_cyc )
 	{
 		unsigned char	redata;
 		
-		
+//		SPDLOG_INFO(" eeprom::Read_RecordCyc()");
 		Read( ADDR_RECORD_CYCLE, 1, &redata );
 		
 		if( redata == 0xFF )
 		{
 			*com_rec_cyc = RECORDCYC_DEF;
+			//*com_rec_cyc = 10;
 			*rec_cyc = 1;
 		}
 		else if( redata <= 20 )
 		{
 			*com_rec_cyc = (unsigned int)(redata * 10);
 			*com_rec_cyc = *com_rec_cyc >> 1;
+			//*com_rec_cyc = (unsigned int) redata  >> 1;
 			*rec_cyc = *com_rec_cyc;
 			
 			if( *com_rec_cyc < 40 )
@@ -214,7 +304,7 @@ namespace nvr
 		}
 		
 		
-//		cycl_dataset();
+		//cycl_dataset();
 		
 		return 0;
 	}
@@ -227,7 +317,7 @@ namespace nvr
 	{
 		unsigned char	redata;
 		
-		
+//		SPDLOG_INFO(" eeprom::Read_FSize()");
 		Read( ADDR_FILE_SIZE, 1, &redata );
 		
 		if( (redata == 0x00) || (redata == 0xFF) )
@@ -248,6 +338,7 @@ namespace nvr
 	/********************************************************************************/
 	int eeprom::Read_SNo( unsigned char* no )
 	{
+//		SPDLOG_INFO(" eeprom::Read_SNo()");
 		return Read( ADDR_SERIAL_NUMBER, 8, no );	
 	}
 	
@@ -260,6 +351,7 @@ namespace nvr
 		int				ret;
 		unsigned char	redata;
 		
+//		SPDLOG_INFO(" eeprom::Read_RecWatchCount()");
 		ret = Read( ADDR_RECORD_WATCH, 1, &redata );
 		
 		if( ret >= 0)
@@ -308,7 +400,7 @@ namespace nvr
 		}
 		else
 		{
-			*addr++;
+			(*addr)++;
 		}
 		
 		if( *addr > LOG_MAX )

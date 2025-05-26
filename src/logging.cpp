@@ -48,7 +48,7 @@ namespace nvr
 		::nvr::ByteToCC(    D, &buf[ 6] );
 		::nvr::ByteToCC(    h, &buf[ 8] );
 		::nvr::ByteToCC(    m, &buf[10] );
-		::nvr::ByteToCC(    s, &buf[ 12] );
+		::nvr::ByteToCC(    s, &buf[12] );
 	}
 	
 	/*------------------------------------------------------
@@ -74,6 +74,14 @@ namespace nvr
 		
 		unsigned char data[14];
 		MakeLogData( code, _tm, data );
+		
+		printf( "WRITE LOG ADDR=%d\n", logout_address_ );
+		printf( "WRITE LOG DATA=" );
+		for( int i=0; i< 14; i++ )
+		{
+			printf( "%02X ", data[i] );
+		}
+		printf( "\n" );
 		
 		return eeprom_->Write_LogData( logout_address_, data );
 	}

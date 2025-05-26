@@ -6,6 +6,7 @@
 #include <thread>
 #include "logging.hpp"
 #include "gpio.hpp"
+#include "eeprom.hpp"
 
 namespace nvr {
     class sd_manager
@@ -17,6 +18,7 @@ namespace nvr {
         static const int format_result_none;
         static const int format_result_success;
         static const int format_result_error;
+        static const int format_result_nonstandard; 
         static const int update_result_none;
         static const int update_result_success;
         static const int update_result_error;
@@ -25,11 +27,13 @@ namespace nvr {
             const char *device_file,
             const char *mount_point,
             const char *nvr_file,
-            std::shared_ptr<logger> logger
+            std::shared_ptr<logger> logger,
+            std::shared_ptr<eeprom> eeprom
         ) noexcept : device_file_(device_file),
               mount_point_(mount_point),
               nvr_file_(nvr_file),
               logger_(logger),
+              eeprom_(eeprom),
               format_result_(0),
               mount_status_(0),
               counter_(0)
@@ -47,10 +51,12 @@ namespace nvr {
         bool is_root_file_exists() noexcept;
         int start_format();
         int is_formatting();
+        int is_writprotect();
         bool check_proc_mounts();
         uint64_t get_sector_count();
         int unmount_sd();
         int mount_sd();
+        int mount_sd_ro();
         inline bool is_device_file_exists() noexcept        
         {
             std::error_code ec;
@@ -64,7 +70,10 @@ namespace nvr {
         bool wait_update();
         void format_process();
         void update_process();
-
+        bool check_update();
+        bool try_read_device();
+		void trigger_rescan();
+		
         inline bool is_update_file_exists() noexcept
         {
             std::error_code ec;
@@ -95,6 +104,7 @@ namespace nvr {
         std::atomic<int>  update_result_;
         std::atomic<int> mount_status_;
         std::shared_ptr<logger> logger_;
+         std::shared_ptr<eeprom> eeprom_;
         int counter_;
     };
 }

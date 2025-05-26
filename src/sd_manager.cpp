@@ -22,13 +22,16 @@ namespace nvr {
     const int sd_manager::format_result_none = 0;
     const int sd_manager::format_result_success = 1;
     const int sd_manager::format_result_error = 2;
+    const int sd_manager::format_result_nonstandard = 3;
     const int sd_manager::update_result_none = 0;
     const int sd_manager::update_result_success = 1;
     const int sd_manager::update_result_error = 2;
+    
 
 
     static const size_t BUFSIZE = 10240;
-
+/*----------------------------------------------------------
+----------------------------------------------------------*/
     int sd_manager::start_format()
     {
         SPDLOG_DEBUG("start_format");
@@ -43,6 +46,9 @@ namespace nvr {
         return 0;
     }
 
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
     void sd_manager::format_process()
     {
         int result = format_result_none;
@@ -50,6 +56,13 @@ namespace nvr {
         int status = 0;
         int rc = 0;
         std::stringstream tid;
+        
+        uint64_t sector_count = 0;
+        uint64_t total_bytes = 0;
+        uint64_t Usable_byte = 0;
+        uint64_t file_count = 0;
+        
+        
 
         tid << std::this_thread::get_id();
 
@@ -75,6 +88,27 @@ namespace nvr {
                 goto END;
             }
         }
+        
+        
+       	unsigned char sz_kb;
+		eeprom_->Read_FSize( &sz_kb );
+        
+        sector_count = get_sector_count();                    	//セクター数 
+        total_bytes = sector_count * 512;                     	//総容量
+        Usable_byte = total_bytes - ((total_bytes/100)*5);    	//予備5％除いたの使用可能容量
+        file_count = Usable_byte / (sz_kb * 1024); 				//保存可能枚数
+        
+        
+        /*
+        if( file_count < 465000 )
+        {
+        	result = format_result_nonstandard;
+            goto END;
+        }
+        */
+
+        
+        
 
         SPDLOG_DEBUG("Start mkfs.vfat");
         pid = fork();
@@ -128,9 +162,20 @@ namespace nvr {
         result = format_result_success;
     END:
         format_result_.store(result);
+        if( result ==  format_result_error )
+        {
+        	//---SDアクセス異常
+			//
+			logger_->LogOut( 9 );
+        }
+        
+        
         SPDLOG_DEBUG("<<< format_process {} {}", tid.str(), result);
     }
 
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
     bool sd_manager::wait_format()
     {
         if (!thread_.joinable()) {
@@ -148,6 +193,9 @@ namespace nvr {
         return true;
     }
 
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
     int sd_manager::mount_sd()
     {
         return mount(
@@ -159,10 +207,30 @@ namespace nvr {
         );
     }
 
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/    
+    int sd_manager::mount_sd_ro()
+    {
+        return mount(
+            device_file_.c_str(),
+            mount_point_.c_str(),
+            "vfat",
+            MS_NOATIME|MS_NOEXEC|MS_RDONLY,
+            "errors=continue"
+        );
+    }
+
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
     int sd_manager::unmount_sd() {
         return umount(mount_point_.c_str());
     }
 
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
     void sd_manager::timer_process()
     {
         static const std::filesystem::path proc_mounts{"/proc/mounts"};
@@ -218,6 +286,9 @@ namespace nvr {
         }
     }
 
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
     bool sd_manager::check_proc_mounts()
     {
         static const std::filesystem::path proc_mounts{"/proc/mounts"};
@@ -244,6 +315,9 @@ namespace nvr {
         return false;
     }
 
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
     bool sd_manager::check_mount_point()
     {
         int status = get_mount_status();
@@ -257,6 +331,8 @@ namespace nvr {
     }
 
 
+/*----------------------------------------------------------
+----------------------------------------------------------*/
     int sd_manager::create_root_file()
     {
         //以下SDのrootに作成
@@ -370,6 +446,9 @@ namespace nvr {
         return 0;
     }
 
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
     uint64_t sd_manager::get_sector_count()
     {
         std::ifstream file("/sys/block/mmcblk1/size");
@@ -383,35 +462,84 @@ namespace nvr {
     }
 
 
-    /*----------------------------------------------------------
-    ----------------------------------------------------------*/
+/*----------------------------------------------------------
+----------------------------------------------------------*/
     bool sd_manager::is_sd_card()
-    {
-
+    {	
         //---SDカードが挿入されているか
         //
+        int res = 100;
+        
+        
         if ( !is_device_file_exists() ){
+        	/*
+        	int rc = unmount_sd();
+            if (rc) {
+                SPDLOG_ERROR("Failed to unmount: {}", strerror(errno));
+            }
+            */
             SPDLOG_INFO("is_device_file_exists false");
             return false;
         }
-
+        
+        SPDLOG_INFO("is_device_file_exists true");
 
         //---SDカードがマウントされているか
         //
         if ( !check_proc_mounts() ){
-            mount_sd();
-            if(!check_proc_mounts()){
-                SPDLOG_INFO("check_proc_mounts false");
+            
+			/*
+			res = mount( device_file_.c_str(), mount_point_.c_str(),
+            "vfat",
+            MS_NOATIME|MS_NOEXEC|MS_REMOUNT,
+            "errors=continue"
+            );
+            */
+            
+            res = mount_sd();
+			SPDLOG_INFO("check_proc_mounts mount = {}",res);
+			if(res == -1 )
+			{
+				res = unmount_sd();
+				SPDLOG_INFO("check_proc_mounts unmount = {}",res);
+				
+				if (!try_read_device()) {
+		            std::cerr << "[ERROR] Device read failed. Possibly removed during DMA transfer\n";
+		            trigger_rescan(); // カードが再挿入されていれば再認識される
+		        }
+				
+				/*
+				const char *device_path = "/dev/mmcblk1p1";
+				// udevadm trigger コマンドを構築
+				char command[256];
+				snprintf(command, sizeof(command), "udevadm trigger --subsystem-match=block --action=remove %s", device_path);
+				
+				int result = system(command);
+				if (result == -1) {
+					SPDLOG_INFO("udevadm trigge falet");
+				}
+				*/
+				return false;
+			}
+			else
+			if(!check_proc_mounts() )
+			{
+                res = unmount_sd();
+                SPDLOG_INFO("check_proc_mounts unmount = {}",res);
                 return false;
             }
+            
         }
         
-        //---SDカードを読めるか
+        SPDLOG_INFO("check_proc_mounts true");
+       
+        
+        //---update check
         //
-        if( !is_root_file_exists() ) {
-            SPDLOG_INFO("is_root_file_exists false");
-            return false;
-        }
+		if( check_update() )
+		{
+			return false;
+		}
         
         
         return true;
@@ -438,6 +566,29 @@ namespace nvr {
         return res;
     }
 
+    /*----------------------------------------------------------
+    ----------------------------------------------------------*/
+
+    int sd_manager::is_writprotect()
+    {
+        if(mount_sd_ro() != 0 )
+        {
+        	return -1;
+        }
+        
+        unmount_sd();
+        
+        if( mount_sd() != 0 )
+        {
+        	//read only
+        	return 1;        
+        }
+        
+        unmount_sd();
+        
+        return 2;
+    }
+    
 
     /*----------------------------------------------------------
     ----------------------------------------------------------*/
@@ -457,6 +608,90 @@ namespace nvr {
 
         return true;
     }
+    
+    /*------------------------------------------------------
+	------------------------------------------------------*/
+	bool sd_manager::check_update()
+	{
+		const char *bin_dir = "/mnt/sd"; 
+		fs::path path(bin_dir);
+		std::error_code ec;	
+		
+		
+		//---/mnt/sd ディレクトリの存在確認
+		//
+		if (!fs::exists(path, ec)) {
+			return false;
+		}
+		
+		//---SDフォルダにアップデータフォルダ(鍵付きZIP)があるかの確認
+		//
+		for (const fs::directory_entry& x : fs::directory_iterator(path)) 
+		{
+			
+			std::string filename = x.path().filename().string();
+			
+			int pos = filename.find("EVC");
+			std::cout << pos << std::endl;
+			
+			//フォルダ名にEVCとついたフォルダがあるかの確認(実行ファイル)
+			//
+			if(pos != 0){
+				continue;
+			}
+			
+			pos = filename.length() - filename.find(".zip");
+			if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".zip") {
+				SPDLOG_INFO("ZIP file detected: {}", filename);
+			} else {
+				continue;
+			}		
+			
+			SPDLOG_INFO("is update file");
+			return true;
+		}
+		
+		return false;
+	}
+	
+	
+    /*------------------------------------------------------
+	------------------------------------------------------*/	
+	bool sd_manager::try_read_device() 
+	{
+		const std::string device_path = "/dev/mmcblk1";
+		
+    	int fd = open(device_path.c_str(), O_RDONLY);
+		if (fd < 0) {
+		    std::cerr << "open failed: " << strerror(errno) << "\n";
+		    return false;
+		}
+
+		char buffer[512];
+		ssize_t ret = read(fd, buffer, sizeof(buffer));
+		close(fd);
+
+		if (ret < 0) {
+		    std::cerr << "read failed: " << strerror(errno) << "\n";
+		    return false;
+		}
+
+    	return true;
+	}
+
+
+    /*------------------------------------------------------
+	------------------------------------------------------*/
+	void sd_manager::trigger_rescan() 
+	{
+		std::ofstream rescan("/sys/class/mmc_host/mmc1/rescan");
+		if (rescan.is_open()) {
+		    rescan << "1" << std::endl;
+		    std::cout << "Triggered rescan\n";
+		} else {
+		    std::cerr << "Failed to write to rescan\n";
+		}
+	}
 }
 
 

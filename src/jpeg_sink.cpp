@@ -1,13 +1,17 @@
 #include "pipeline.hpp"
 #include "logging.hpp"
 
+#define USE_JPEG_ENC    0
+
 namespace nvr
 {
     gboolean jpeg_sink::setup(GstBin *pipeline)
     {
         gboolean ret = TRUE;
         element queue;
-//        element jpeg_enc;
+#if USE_JPEG_ENC
+        element jpeg_enc;
+#endif
         element jpeg_file_sink;
 
         queue = element(pipeline, "queue", "queue_jpeg");
@@ -22,14 +26,14 @@ namespace nvr
                 "max-size-time", 0
             );
         }
-
-//        jpeg_enc = element(pipeline, "jpegenc", "jpeg_enc");
-//        if (!jpeg_enc)
-//        {
-//            SPDLOG_ERROR("Failed to make jpeg_enc element.");
-//            ret = FALSE;
-//        }
-
+#if USE_JPEG_ENC
+        jpeg_enc = element(pipeline, "jpegenc", "jpeg_enc");
+        if (!jpeg_enc)
+        {
+            SPDLOG_ERROR("Failed to make jpeg_enc element.");
+            ret = FALSE;
+        }
+#endif
         jpeg_file_sink = element(pipeline, "multifilesink", "jpeg_file_sink");
         if (!jpeg_file_sink)
         {
@@ -51,7 +55,9 @@ namespace nvr
 
         ret = gst_element_link_many(
             static_cast<GstElement*>(queue_),
-//            static_cast<GstElement*>(jpeg_enc),
+#if USE_JPEG_ENC
+            static_cast<GstElement*>(jpeg_enc),
+#endif
             static_cast<GstElement*>(jpeg_file_sink),
             nullptr
         );

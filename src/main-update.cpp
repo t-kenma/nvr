@@ -35,7 +35,8 @@ struct callback_data_t
 					    signal_user2_id(0),
 					    b_reboot(false),
 					    interrupted(false),
-					    is_power_pin_high(false)
+					    is_power_pin_high(false),
+					    main_loop(nullptr)
 	{}
 	
 	guint signal_int_id;
@@ -51,6 +52,7 @@ struct callback_data_t
 	nvr::gpio_out *_red;
 	nvr::gpio_out *_yel;
 	nvr::gpio_in *cminsig;
+	GMainLoop *main_loop;
 };
 
 
@@ -75,12 +77,15 @@ int _do_reboot() noexcept;
 bool check_power(callback_data_t *data);
 bool check_cminsig(callback_data_t *data);
 int g_counter_ = 0;
+int setDownDt();
 
 /***********************************************************
 ***********************************************************/
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
+
+/*
 static gboolean timer1_cb(gpointer udata) 
 {
 	callback_data_t *data = static_cast<callback_data_t *>(udata);
@@ -98,7 +103,8 @@ static gboolean timer1_cb(gpointer udata)
 			data->_grn->write_value(true);
             data->_red->write_value(true);
             data->_yel->write_value(true);
-			_do_reboot();
+            data->b_reboot = true;
+			g_main_loop_quit(data->main_loop);
 			return G_SOURCE_CONTINUE;
 		}
 		
@@ -120,6 +126,64 @@ static gboolean timer1_cb(gpointer udata)
         if( g_counter_ >= 5)
         {
             g_counter_ = 3;
+        }        
+		
+		return G_SOURCE_CONTINUE;
+	}
+	
+	if( update() == true )
+	{
+		//---SD抜き待ち
+		//
+		data->update_ok = true;
+	}
+	
+	return G_SOURCE_CONTINUE;
+}
+*/
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+static gboolean timer1_cb(gpointer udata) 
+{
+	callback_data_t *data = static_cast<callback_data_t *>(udata);
+	//500ms タイマー処理
+	
+	//
+	
+	check_power(data);
+
+	if( data->update_ok )
+	{
+		if(!is_sd_card())
+		{
+			SPDLOG_INFO("_do_reboot");
+			data->_grn->write_value(true);
+            data->_red->write_value(true);
+            data->_yel->write_value(true);
+            data->b_reboot = true;
+			g_main_loop_quit(data->main_loop);
+			return G_SOURCE_CONTINUE;
+		}
+		
+	    if( g_counter_ >= 0 && g_counter_ < 6)
+        {
+            data->_grn->write_value(true);
+            data->_red->write_value(true);
+            data->_yel->write_value(true);
+        }
+        else
+        if( g_counter_ >= 6 && g_counter_ < 10 )
+        {
+            data->_grn->write_value(false);
+            data->_red->write_value(false);
+            data->_yel->write_value(false);
+        }
+
+        g_counter_++;
+        if( g_counter_ >= 10)
+        {
+            g_counter_ = 6;
         }        
 		
 		return G_SOURCE_CONTINUE;
@@ -214,6 +278,7 @@ bool check_power(callback_data_t *data)
 		return false;
 	}
 	
+	setDownDt();
 	//log
 	//
 	
@@ -230,11 +295,64 @@ bool check_power(callback_data_t *data)
 	} 
 	
 	
-	_do_reboot();
+    data->b_reboot = true;
+	g_main_loop_quit(data->main_loop);
       
-	SPDLOG_INFO("power pin = {}",value);
+	SPDLOG_INFO("power reboot",value);
 	return true;
 }
+
+
+/*------------------------------------------------------
+------------------------------------------------------*/
+int setDownDt()
+{
+	std::filesystem::path dir = "/etc/nvr";
+	std::error_code ec;
+	time_t tme = time( NULL );
+	struct tm* _tm = localtime( &tme ); 
+	int rc;
+
+	/*
+	unsigned char Y = _tm->tm_year % 100;	// 年 [1900からの経過年数] : (Y + 1900) % 100 = Y
+	unsigned char M = _tm->tm_mon + 1;		// 月 [0-11] 0から始まることに注意
+	unsigned char D = _tm->tm_mday;			// 日 [1-31]
+	unsigned char h = _tm->tm_hour;			// 時 [0-23]
+	unsigned char m = _tm->tm_min;			// 分 [0-59]
+	unsigned char s = _tm->tm_sec;			// 秒 [0-61] 最大2秒までのうるう秒を考慮
+
+	int len = 6;
+	char res[6];
+	res[0] = ::nvr::ByteToBcd( Y );	// YY(BCD)
+	res[1] = ::nvr::ByteToBcd( M );	// MM(BCD)
+	res[2] = ::nvr::ByteToBcd( D );	// DD(BCD)
+	res[3] = ::nvr::ByteToBcd( h );	// hh(BCD)
+	res[4] = ::nvr::ByteToBcd( m );	// mm(BCD)
+	res[5] = ::nvr::ByteToBcd( s );	// ss(BCD)
+	*/
+	
+	int len = 2;
+	char res[2];
+	res[0] = 1;
+	res[1] = 2;
+	
+	//---ディレクトリの存在確認
+	//
+	if (std::filesystem::is_directory(dir, ec))
+	{
+		if( nvr::file_write( "/etc/nvr/downdt2.dat", res, len, &rc ) < 0 )
+		{
+			printf( "file_write() false\n" );
+			return -1;
+		}
+	}
+	else
+	{
+		return -1;
+	}
+	
+	return 0;
+} 
 
 
 /*----------------------------------------------------------
@@ -518,7 +636,9 @@ int _do_reboot() noexcept
 	
 	//---プロセスの複製
 	//
+	SPDLOG_INFO("in");
 	_pid = fork();
+	SPDLOG_INFO(" pid = {}",_pid);
 	if (_pid < 0)
 	{
 		SPDLOG_ERROR("Failed to fork process: {}", strerror(errno));
@@ -529,6 +649,7 @@ int _do_reboot() noexcept
 	{
 		//---shutdownプロセス実行
 		//
+		SPDLOG_INFO(" child pid = {}",_pid);
 		execl("/sbin/shutdown", "/sbin/shutdown", "-r", "now", nullptr);
 		SPDLOG_ERROR("Failed to exec reboot.");
 		exit(-1);
@@ -538,8 +659,10 @@ int _do_reboot() noexcept
 	//---shutdownプロセス完了までwait
 	//
 	waitpid(_pid, &status, 0);
+
 	
 	if (!WIFEXITED(status)) {
+		SPDLOG_INFO("_do_reboot() return -1;");
 		return -1;
 	}
 	
@@ -700,6 +823,7 @@ static bool wait_power_pin(std::shared_ptr<nvr::gpio_in> pm, callback_data_t *da
 		if (rc == 0)
 		{
 			pm->read_value(&new_value);
+			SPDLOG_INFO("wait_power_pin pin = {}",new_value);
 			if (new_value == 1) 
 			{
 				break;
@@ -712,8 +836,7 @@ static bool wait_power_pin(std::shared_ptr<nvr::gpio_in> pm, callback_data_t *da
 				first = false;
 			}
 		}
-		SPDLOG_INFO("wait_power_pin-while end");
-		sleep(100);
+		sleep(1);
 	}
 	
 	SPDLOG_INFO("wait_power_pin ok");
@@ -751,7 +874,6 @@ int mount_sd()
 int main(int argc, char **argv)
 {
 	callback_data_t data{};
-	GMainLoop *main_loop;
 
 	//--- ルートファイルシステム 再マウント
 	//
@@ -813,7 +935,7 @@ int main(int argc, char **argv)
 	//--- timer start
 	//
 	timer1_id = g_timeout_add_full(G_PRIORITY_HIGH,				// 優先度
-									1000,						// タイマー周期 1000msec
+									500,						// タイマー周期 1000msec
 									G_SOURCE_FUNC(timer1_cb),	//
 									 &data,						// 
 									nullptr);					// 
@@ -824,22 +946,6 @@ int main(int argc, char **argv)
 	}
 	
 	
-	//---メインループ 作成
-	//
-	main_loop = g_main_loop_new(NULL, FALSE);
-	
-	
-	//---console input enable(メインループをコンソールからkillするため)
-    //
-	signal_int_id  = g_unix_signal_add(SIGINT, G_SOURCE_FUNC(signal_intr_cb), main_loop);
-	signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), main_loop);
-#ifdef G_OS_UNIX
-	data.signal_int_id   = g_unix_signal_add(SIGINT,  G_SOURCE_FUNC(callback_signal_intr), &data);
-	data.signal_term_id  = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(callback_signal_term), &data);
-	data.signal_user1_id = g_unix_signal_add(SIGUSR1, G_SOURCE_FUNC(callback_signal_user1), &data);
-	data.signal_user2_id = g_unix_signal_add(SIGUSR2, G_SOURCE_FUNC(callback_signal_user2), &data);
-#endif
-
 	if (wait_power_pin(gpio_power, &data)) {
         goto END;
     }
@@ -860,9 +966,25 @@ int main(int argc, char **argv)
 	}
 	
 	
-	//---メインループ 実行
+	//---メインループ 作成実行
 	//
-	g_main_loop_run(main_loop);
+	data.main_loop = g_main_loop_new(nullptr, FALSE);
+	
+	//---console input enable(メインループをコンソールからkillするため)
+    //
+	//signal_int_id  = g_unix_signal_add(SIGINT, G_SOURCE_FUNC(signal_intr_cb), main_loop);
+	//signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), main_loop);
+	
+#ifdef G_OS_UNIX
+	data.signal_int_id   = g_unix_signal_add(SIGINT,  G_SOURCE_FUNC(callback_signal_intr), &data);
+	data.signal_term_id  = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(callback_signal_term), &data);
+	data.signal_user1_id = g_unix_signal_add(SIGUSR1, G_SOURCE_FUNC(callback_signal_user1), &data);
+	data.signal_user2_id = g_unix_signal_add(SIGUSR2, G_SOURCE_FUNC(callback_signal_user2), &data);
+#endif
+	
+	
+	g_main_loop_run(data.main_loop);
+	g_main_loop_unref(data.main_loop);
 		
 END:
 	
@@ -906,6 +1028,7 @@ END:
 #endif
 	
 	if (data.b_reboot) {
+		SPDLOG_INFO("b_reboot");
 		std::this_thread::sleep_for(std::chrono::seconds(1));
 		_do_reboot();
 	}

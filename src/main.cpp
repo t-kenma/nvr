@@ -44,6 +44,7 @@
 
 #include "common.hpp"
 
+
 /***********************************************************
 ***********************************************************/
 struct callback_data_t
@@ -57,11 +58,19 @@ struct callback_data_t
 						jpeg_time(0),
 						is_video_error(false),
 						interrupted(false),
-						main_loop(nullptr)
+						main_loop(nullptr),
+						signal_int_id(0),
+						signal_term_id(0),
+						signal_user1_id(0),
+						signal_user2_id(0)
 	{}
 	
 	guint timer1_id;
 	guint bus_watch_id;
+	guint signal_int_id;
+	guint signal_term_id;
+	guint signal_user1_id;
+	guint signal_user2_id;
 	
 	std::shared_ptr<nvr::pipeline> pipeline;
 	std::shared_ptr<nvr::logger> logger;	
@@ -80,18 +89,14 @@ struct callback_data_t
 	std::atomic<std::time_t> jpeg_time;
 	bool is_video_error;
 	std::atomic<bool> interrupted;
-	int copy_interval;
 	bool low_battry;
 #ifdef NVR_DEBUG_POWER
 	nvr::gpio_out *tmp_out1;
 #endif
 	GMainLoop *main_loop;
 	
-	bool* broken_test_ena;
-	int* broken_test_cnt;
-	
-	std::shared_ptr<nvr::usb> usb;	
-	std::shared_ptr<nvr::eeprom> eeprom;	
+	std::shared_ptr<nvr::usb> usb;
+	std::shared_ptr<nvr::eeprom> eeprom;
 };
 
 namespace fs = std::filesystem;
@@ -112,25 +117,24 @@ int count_sd_access_err = 0;
 bool system_error = false;
 bool formatting = false;
 
-bool broken_test_ena = false;
-int broken_test_cnt = 0;
-
 int  file_idx = 0;
 int  file_max = 0;
 
 
 std::shared_ptr<nvr::usb> _usb;
 
-bool usb_sd_access = false;
-
-unsigned char recchekflg = 0;
-unsigned char chkexeflg = 0;
+unsigned int recchekflg = 0;
+unsigned int chkexeflg = 0;
 char last_save_path[2048];
 
 
+int err_usb_alert = 0;
+unsigned int copy_interval = 3;
 
 
-
+static void on_interrupted(callback_data_t *data);
+gboolean send_interrupt_message(GstElement *pipeline);
+int setDownDt();
 
 
 /***********************************************************
@@ -177,44 +181,128 @@ unsigned char exif[380] =
 ***********************************************************/
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
-void compressYUYVtoJPEG( const std::vector<uint8_t>& input, const int width, const int height, int quality, std::vector<uint8_t>& output )
+static void on_interrupted(callback_data_t *data)
+{
+	send_interrupt_message(static_cast<GstElement*>(*data->pipeline));
+	data->interrupted.store(true, std::memory_order_relaxed);
+}
+
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+gboolean send_interrupt_message(GstElement *pipeline)
+{
+	if (!pipeline) {
+		return FALSE;
+	}
+	/* post an application specific message */
+	gboolean ret = gst_element_post_message(
+		GST_ELEMENT(pipeline),
+		gst_message_new_application(
+			GST_OBJECT(pipeline),
+			gst_structure_new(g_interrupt_name, "message", G_TYPE_STRING, "Pipeline interrupted", nullptr)));
+	if (ret) {
+		SPDLOG_INFO("Interrupt message sent.");
+	}
+	
+	SPDLOG_INFO("send_interrupt_message.");
+	return ret;
+}
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+static gboolean signal_user1_cb(gpointer udata)
+{
+	SPDLOG_INFO("SIGUSER1 receiverd.");
+	callback_data_t* data = static_cast<callback_data_t*>(udata);
+	
+	send_interrupt_message(static_cast<GstElement*>(*data->pipeline));
+	data->interrupted.store(true, std::memory_order_relaxed);
+	
+	/* remove signal handler */
+	data->signal_user1_id = 0;
+	guint signal_int_id;
+	guint signal_term_id;
+	guint signal_user1_id;
+	guint signal_user2_id;
+	return G_SOURCE_REMOVE;
+}
+
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+static gboolean signal_user2_cb(gpointer udata)
+{
+	SPDLOG_INFO("SIGUSER2 receiverd.");
+	callback_data_t* data = static_cast<callback_data_t*>(udata);
+	
+	nvr::do_systemctl("restart", "systemd-networkd");
+	
+	return G_SOURCE_CONTINUE;
+}
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+static gboolean signal_intr_cb(gpointer udata)
+{
+	SPDLOG_INFO("SIGINTR receiverd.");
+	
+	callback_data_t* data = static_cast<callback_data_t*>(udata);
+	
+	on_interrupted(data);
+	
+	/* remove signal handler */
+	data->signal_int_id = 0;
+	return G_SOURCE_REMOVE;
+}
+
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+static gboolean signal_term_cb(gpointer udata)
+{
+	SPDLOG_INFO("SIGTERM receiverd.");
+	//---現在時刻を書き込む
+	//
+	setDownDt();
+	
+	callback_data_t* data = static_cast<callback_data_t*>(udata);
+	
+	on_interrupted(data);
+	
+	/* remove signal handler */
+	data->signal_term_id = 0;
+	return G_SOURCE_REMOVE;
+}
+
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+void compressYUYVtoJPEG( const std::vector<uint8_t>& input, const int width, const int height, int quality, uint8_t** outbuffer, uint64_t* outlen )
 {
 	struct jpeg_compress_struct cinfo;
 	struct jpeg_error_mgr jerr;
 	JSAMPROW row_ptr[1];
 	int row_stride;
-
-	uint8_t* outbuffer = NULL;
-	uint64_t outlen = 0;
-
-//SPDLOG_INFO("compressYUYVtoJPEG 1");
-
+	
 	cinfo.err = jpeg_std_error(&jerr);
 	jpeg_create_compress(&cinfo);
-	jpeg_mem_dest(&cinfo, &outbuffer, &outlen);
-
-//SPDLOG_INFO("compressYUYVtoJPEG 2");
+	jpeg_mem_dest(&cinfo, outbuffer, outlen);
 	
 	// jrow is a libjpeg row of samples array of 1 row pointer
 	cinfo.image_width = width & -1;
 	cinfo.image_height = height & -1;
 	cinfo.input_components = 3;
 	cinfo.in_color_space = JCS_YCbCr; //libJPEG expects YUV 3bytes, 24bit
-
-//SPDLOG_INFO("compressYUYVtoJPEG 3");
-
+	
 	jpeg_set_defaults(&cinfo);
 	jpeg_set_quality(&cinfo, quality, TRUE);
 	jpeg_start_compress(&cinfo, TRUE);
-
-//SPDLOG_INFO("compressYUYVtoJPEG 4");
-
+	
 	std::vector<uint8_t> tmprowbuf(width * 3);
-
+	
 	JSAMPROW row_pointer[1];
 	row_pointer[0] = &tmprowbuf[0];
-	
-//SPDLOG_INFO("compressYUYVtoJPEG 5");
 	
 	while (cinfo.next_scanline < cinfo.image_height) {
 		unsigned i, j;
@@ -238,15 +326,11 @@ void compressYUYVtoJPEG( const std::vector<uint8_t>& input, const int width, con
 		}
 		jpeg_write_scanlines(&cinfo, row_pointer, 1);
 	}
-																				
-//SPDLOG_INFO("compressYUYVtoJPEG 6");
 	
 	jpeg_finish_compress(&cinfo);
 	jpeg_destroy_compress(&cinfo);
-
-	std::cout << "libjpeg produced " << outlen << " bytes" << std::endl;
-
-	output = std::vector<uint8_t>(outbuffer, outbuffer + outlen);
+	
+	std::cout << "libjpeg produced " << *outlen << " bytes" << std::endl;
 }
 
 
@@ -299,15 +383,15 @@ int overwriteByteInJPEG( callback_data_t* data, const std::string& filePath )
 	char fs_time2[23];
 	std::time_t t = std::time(nullptr);
 	const std::tm *tm = std::localtime(&t);
-
-
+	
+	
 	int year = tm->tm_year +1900;
 	int mon = tm->tm_mon + 1;
 	int day = tm->tm_mday;
 	int hou = tm->tm_hour;
 	int min = tm->tm_min;
 	int sec = tm->tm_sec;
-
+	
 	fs_time[ 0] = ((year / 1000) % 10) + 0x30;
 	fs_time[ 1] = ((year / 100) % 10) + 0x30;
 	fs_time[ 2] = ((year / 10) % 10) + 0x30;
@@ -323,14 +407,17 @@ int overwriteByteInJPEG( callback_data_t* data, const std::string& filePath )
 	fs_time[12] = (hou % 10) + 0x30;
 	fs_time[13] = 0x3A;
 	fs_time[14] = ((min / 10) % 10) + 0x30;
-	fs_time[15] = (min % 10) + 0x30;
+	//fs_time[15] = (min % 10) + 0x30;
+	/*****************************************************/
+	fs_time[15] = (min % 10) + 0x31;
+	/*****************************************************/
 	fs_time[16] = 0x3A;
 	fs_time[17] = ((sec / 10) % 10) + 0x30;
 	fs_time[18] = (sec % 10) + 0x30;
 	fs_time[19] = 0x00;
 	fs_time[20] = 0x00;
-
-
+	
+	
 	fs_time2[ 0] = ((year / 1000) % 10) + 0x30;
 	fs_time2[ 1] = ((year / 100) % 10) + 0x30;
 	fs_time2[ 2] = ((year / 10) % 10) + 0x30;
@@ -346,7 +433,10 @@ int overwriteByteInJPEG( callback_data_t* data, const std::string& filePath )
 	fs_time2[12] = (hou % 10) + 0x30;
 	fs_time2[13] = 0x3A;
 	fs_time2[14] = ((min / 10) % 10) + 0x30;
-	fs_time2[15] = (min % 10) + 0x30;
+	//fs_time2[15] = (min % 10) + 0x30;
+	/*****************************************************/
+	fs_time2[15] = (min % 10) + 0x31;
+	/*****************************************************/
 	fs_time2[16] = 0x3A;
 	fs_time2[17] = ((sec / 10) % 10) + 0x30;
 	fs_time2[18] = (sec % 10) + 0x30;
@@ -383,7 +473,8 @@ int overwriteByteInJPEG( callback_data_t* data, const std::string& filePath )
 	sprintf( numStr, "%04d", com_rec_cyc );
 	std::string cycle = std::string( "cycle : " ) + numStr;
 	memcpy( &exif[330], cycle.c_str(), cycle.size() );
-
+	
+	copy_interval = com_rec_cyc/10;
 	
 	
 	std::ifstream src( "/tmp/_video.jpg", std::ios::binary );
@@ -392,13 +483,13 @@ int overwriteByteInJPEG( callback_data_t* data, const std::string& filePath )
 		std::cerr << "Failed to open source file\n";
 		return 1;
 	}
-
+	
 	src.seekg(0, std::ios::end);
 	size_t fileSize = src.tellg();
-
+	
 	SPDLOG_INFO("src size = {}",fileSize);
-
-
+	
+	
 #if 0
 	// EXIFをスキップ
 	const std::streampos pos = 20;
@@ -441,18 +532,26 @@ int overwriteByteInJPEG( callback_data_t* data, const std::string& filePath )
 	
 	std::vector<uint8_t> output;
 	int quality = 90;
+	uint8_t* outbuffer = NULL;
+	uint64_t outlen = 0;
 	
 RETRY:
+
 	SPDLOG_INFO( "call compressYUYVtoJPEG() start" );
 	try
 	{
-		compressYUYVtoJPEG( inbuf, 640, 480, quality, output );
+		compressYUYVtoJPEG( inbuf, 640, 480, quality, &outbuffer, &outlen );
 	}
 	catch(const std::exception& e)
 	{
 		std::cerr << e.what() << '\n';
+		//---映像入力異常 ファイルサイズerr ログ
+		//
+		data->logger->LogOut( 7 );
 	}
 	SPDLOG_INFO( "call compressYUYVtoJPEG() end" );
+	
+	output = std::vector<uint8_t>(outbuffer, outbuffer + outlen);
 	
 	SPDLOG_INFO( "output.size() {}", output.size() );
 	
@@ -469,13 +568,20 @@ RETRY:
 		if( quality >= 90 )
 		{
 			quality = 50;
+			free( outbuffer );
+			outbuffer = NULL;
+			outlen = 0;
 			goto RETRY;
 		}
-	} 
+	}
 	else
 	{
- 		dst.write( reinterpret_cast<const char*>(exif), sizeof(exif) );
+		dst.write( reinterpret_cast<const char*>(exif), sizeof(exif) );
 		dst.write( (const char*) &output[img_offset], img_size );
+		
+		free( outbuffer );
+		outbuffer = NULL;
+		outlen = 0;
 		
 		int cnt = (sz_kb * 1024) - output_size;
 		char dmy = 0;
@@ -483,11 +589,19 @@ RETRY:
 		{
 			dst.write( (const char*) &dmy, 1 );
 		}
+		
+		if (dst.fail()) 
+		{
+			std::cerr << "書き込みエラーが発生しました。\n";
+			src.close();
+			dst.close();
+			return 1;
+		}
 	}
 	
 	
 #endif
-
+	
 	src.close();
 	dst.close();
 	
@@ -504,13 +618,13 @@ bool is_btn(callback_data_t *data)
 	if (value == 1){
 		return false;
 	}
-
+	
 	return true;
 }
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
-bool is_video( callback_data_t *data )
+bool is_video()
 {
 	std::string path = "/sys/devices/platform/soc/10058000.i2c/i2c-0/0-0020/status3";
 	
@@ -604,7 +718,7 @@ bool ReadRecMax( int* file_max )
 {
 	bool ret = ReadIndex( inf1.c_str(), file_max );
 	
-	printf( "ReadIndex() %s RecMax=%d\n", inf1.c_str(), file_max );
+	printf( "ReadIndex() %s RecMax=%d\n", inf1.c_str(), *file_max );
 	
 	return ret;
 }
@@ -615,7 +729,7 @@ bool ReadRecIndex( int* file_idx )
 {
 	bool ret = ReadIndex( inf2.c_str(), file_idx );
 	
-	printf( "ReadIndex() %s RecIndex=%d\n", inf2.c_str(), file_idx );
+	printf( "ReadIndex() %s RecIndex=%d\n", inf2.c_str(), *file_idx );
 	
 	return ret;
 }
@@ -647,12 +761,9 @@ bool WriteRecIndex( int file_idx, int file_max )
 	}
 	
 	printf( "%s : %s\n", inf2.c_str(), buf );
-
+	
 	return true;
 }
-
-
-
 
 
 /*----------------------------------------------------------
@@ -674,9 +785,9 @@ bool copy_jpeg( callback_data_t* data )
 	fs::path dir1;
 	fs::path dir2;
 	fs::path dir3;
-
+	
 	std::error_code ec;
-
+	
 	//---ファイルをリネームして確保
 	//
 	if (std::rename("/tmp/video.jpg","/tmp/_video.jpg") == -1)
@@ -690,8 +801,8 @@ bool copy_jpeg( callback_data_t* data )
 	{
 		SPDLOG_DEBUG("Rename {} to {}", "/tmp/video.jpg", "/tmp/_video.jpg");
 	}
-
-
+	
+	
 	SPDLOG_INFO("file_idx = {}",file_idx);
 	
 	//保存先をファイルのidxから計算
@@ -699,32 +810,32 @@ bool copy_jpeg( callback_data_t* data )
 	/************debug************ */
 	int sd_extr = 0;
 	/***************************** */
-
+	
 	if(sd_extr) //dir3
 	{
 		d1 = (file_idx / 1000000) % 100;   // 百万単位
 		d2 = (file_idx / 10000) % 100;     // 万単位
 		d3 = (file_idx / 100) % 100;       // 百単位
 		file = file_idx % 100;
-
-
+		
+		
 		sprintf(num_dir1, "%02d", d1);
 		sprintf(num_dir2, "%02d", d2);
 		sprintf(num_dir3, "%02d", d3);
-
+		
 		strcpy( s_dir1, "DIR1_" );
 		strcat( s_dir1, num_dir1);
-
+		
 		strcpy( s_dir2, "DIR2_" );
 		strcat( s_dir2, num_dir2);
-
+		
 		strcpy( s_dir3, "DIR3_" );
 		strcat( s_dir3, num_dir3);
-
+		
 		dir1 = fs::path(s_dir1);
 		dir2 = fs::path(s_dir2);
 		dir3 = fs::path(s_dir3);
-
+		
 		save_path = fs::path("/mnt/sd/EVC") / dir1 / dir2 / dir3 ;
 	}
 	else		//dir2
@@ -732,23 +843,23 @@ bool copy_jpeg( callback_data_t* data )
 		d1 = (file_idx / 10000) % 100;     // 万単位
 		d2 = (file_idx / 100) % 100;       // 百単位
 		file = file_idx % 100;
-
+		
 		sprintf(num_dir1, "%02d", d1);
 		sprintf(num_dir2, "%02d", d2);
-
+		
 		strcpy( s_dir1, "DIR1_" );
 		strcat( s_dir1, num_dir1);
-
+		
 		strcpy( s_dir2, "DIR2_" );
 		strcat( s_dir2, num_dir2);
-
-
+		
+		
 		dir1 = fs::path(s_dir1);
 		dir2 = fs::path(s_dir2);
 		save_path = fs::path("/mnt/sd/EVC") / dir1 / dir2;
 	}
-		
-
+	
+	
 	//---保存するディレクトリの存在確認
 	//
 	if (!fs::exists(save_path, ec))
@@ -776,17 +887,26 @@ bool copy_jpeg( callback_data_t* data )
 		save_path = save_path / g_strdup_printf( "JP%06u.DAT",file_idx);
 										
 		SPDLOG_INFO("path = {}",save_path.c_str());
-		overwriteByteInJPEG( data, save_path );	
+		if(overwriteByteInJPEG( data, save_path ) == 0)
+		{
+			SPDLOG_INFO("jpeg save");
+		}
+		else
+		{
+			SPDLOG_INFO("jpeg faild");
+			return false;
+		}
+		
+		
 		//fs::copy_file("/tmp/_video.jpg", save_path, fs::copy_options::overwrite_existing);
-		SPDLOG_INFO("jpeg save");
 	}
 	catch (const fs::filesystem_error& e) 
 	{
 		std::cerr << "画像コピー失敗: " << e.what() << '\n';
 		return false;
 	}
-
-
+	
+	
 	//---ファイルの同期
 	//
 	try 
@@ -794,7 +914,7 @@ bool copy_jpeg( callback_data_t* data )
 		int fd = ::open(save_path.c_str(), O_WRONLY);
 		if (fd != -1)
 		{
-			::fsync(fd);                
+			::fsync(fd);
 			::close(fd);
 		}
 	}
@@ -805,12 +925,12 @@ bool copy_jpeg( callback_data_t* data )
 	}
 	
 	strcpy( last_save_path, save_path.c_str() );
-
-
+	
+	
 	//---避けたファイルを削除
 	//
 	fs::remove( fs::path("/tmp/_video.jpg"));
-
+	
 	
 	//---inf2に対して書き込みファイル数を上書き
 	//
@@ -836,31 +956,32 @@ bool chk_rec_dt( bool* no_rec_err )
 {
 	time_t tme = time( NULL );
 	struct tm* _tm = localtime( &tme ); 
-
+	
 	unsigned char rtc_Y = _tm->tm_year - 100;
 	unsigned char rtc_M = _tm->tm_mon + 1;
 	unsigned char rtc_D = _tm->tm_mday;
 	unsigned char rtc_h = _tm->tm_hour;
 	unsigned char rtc_m = _tm->tm_min;
-
+	unsigned char rtc_s = _tm->tm_sec;
+	
+	//if( (rtc_h == 21) && (rtc_s == 0) && (chkexeflg == 0) )
 	if( (rtc_h == 10) && (rtc_m == 0) && (chkexeflg == 0) )
-	{	
-		//if( (USB_status == 0x00) && (rec_status == 0x02) && ((Err_status & 0xDF) == 0) )
-		{
-			 recchekflg = 1;
-		}
-		
+	{
+		recchekflg = 1;
+	
+		//if( (rtc_h != 21) && (rtc_s == 30) && (chkexeflg == 1) )
 		if( (rtc_h != 10) && (rtc_m != 0) && (chkexeflg == 1) )
-		{	
+		{
+			SPDLOG_INFO("chkexeflg = 0");
 			chkexeflg = 0;
 		}
 	}
 	
 	if( recchekflg == 1 )
 	{
+		SPDLOG_INFO("recchek");
 		recchekflg = 0;
 		chkexeflg = 1;
-		
 		
 		int size = 0;
 		char* dat = NULL;
@@ -872,12 +993,13 @@ bool chk_rec_dt( bool* no_rec_err )
 			ifs.seekg( 0, std::ios::end );
 			size = ifs.tellg();
 			ifs.seekg( 0 );
-
+			
 			dat = new char[size];
 			ifs.read( dat, size );
 		}
 		catch( const std::exception& e )
 		{
+			SPDLOG_INFO("chk_rec_dt -1 read err");
 			return false;
 		}
 		
@@ -892,6 +1014,7 @@ bool chk_rec_dt( bool* no_rec_err )
 		
 		if( size < 380 )
 		{
+			SPDLOG_INFO("chk_rec_dt -2 size err");
 			return false;
 		}
 		
@@ -900,6 +1023,10 @@ bool chk_rec_dt( bool* no_rec_err )
 		unsigned char D = nvr::CCToByte( &fs[ 8] );
 		unsigned char h = nvr::CCToByte( &fs[11] );
 		unsigned char m = nvr::CCToByte( &fs[14] );
+		
+		SPDLOG_INFO("rtc = {} {} {} {} {}",rtc_Y,rtc_M,rtc_D,rtc_h,rtc_m);
+		SPDLOG_INFO("last jpeg = {} {} {} {} {}",Y,M,D,h,m);
+		
 		
 		if( (rtc_Y != Y) ||
 			(rtc_M != M) ||
@@ -911,7 +1038,7 @@ bool chk_rec_dt( bool* no_rec_err )
 		}
 		else
 		{
-			*no_rec_err = true;
+			*no_rec_err = false;
 		}
 	}
 	
@@ -922,23 +1049,15 @@ bool chk_rec_dt( bool* no_rec_err )
 ----------------------------------------------------------*/
 void set_broken_output( bool on )
 {
-	broken_test_ena = on;
-	
 	if( on )
 	{
-		//broken_test_cnt = 30 * 60 * 10;		// 30分(100ms単位)
-		broken_test_cnt = 5 * 60 * 10;
-		printf( "broken_test_cnt = %d\n", broken_test_cnt );
+		err_usb_alert		= 30 * 60 * 10;		// 30分(100ms単位)
 	}
 	else
 	{
-		broken_test_cnt = 0;
+		err_usb_alert		= 0;
 	}
-	
-	printf( "broken_test_cnt = %d\n", broken_test_cnt );
 }
-
-
 
 /*----------------------------------------------------------
 	100 ms Timer
@@ -946,414 +1065,415 @@ void set_broken_output( bool on )
 static gboolean on_timer( gpointer udata )
 {
 	callback_data_t *data = static_cast<callback_data_t *>(udata);
+	
 	static int count_btn_down = 0;
 	static int count_rec_off = 0;
 	static int count_sd_none = 0;
 	static int count_copy_interval = 0;
-	static bool tgl_alrm = false;
-	static int alrm_cnt = 0;
+	static int count_video_found = 0;
+	static int count_video_lost = 0;
+	static int count_sd_format = 0;
+	static int count_sd_wp = 0;
 	
-	static bool err_sd_none = false;		// SDカードなし
-	static bool sd_access_err = false;		// SDアクセス異常
-	static bool no_rec_err = false;			// 一定日録画なし
-	static bool system_error = false;		// システム異常
+	static bool err_no_rec		= false;		// 一定日録画なし
+	static bool err_sd_access 	= false;		// SDアクセス異常
+	static bool err_system		= false;		// システム異常
+	static bool err_video		= false;		// 映像入力異常
+	static bool err_sd_none		= false;		// SDカードなし
+	static bool err_low_bat		= false;		// LOWバッテリー異常
+	
+	static bool is_sd_check		= true;			// 
 	
 	static int chk_video_cnt = 0;
 	
 	static bool is_v = false;
 	
-	bool* p_ena = data->broken_test_ena;
-	int* p_cnt = data->broken_test_cnt;
-	
 	static int wait_cnt = 0;
 	
-///	SPDLOG_INFO("on_timer");
-
-
-
-	if( *p_cnt > 0 )
+	static bool tgl_alrm = false;
+	static int alrm_cnt = 0;
+	
+	//--- 毎回黄色LEDを消す
+	data->led->set_y( data->led->off );
+	
+	
+	//------------------------------------------------
+	//--- ビデオ信号監視
+	//------------------------------------------------
+	if( is_video() == false )
 	{
-		(*p_cnt)--;
+		count_video_lost++;
+		if( count_video_lost > 600 )
+		{
+			err_video = true;
+			count_video_found = 0;
+			count_video_lost = 0;
+			
+			//---映像入力異常 ログ
+			//
+			data->logger->LogOut( 7 );
+		}
 	}
-
-	/*
-	if( is_usb_connenct )
+	else
+	if( err_video == true )
 	{
-		gst_element_set_state( static_cast<GstElement*>(*data->pipeline), GST_STATE_PAUSED );
+		count_video_found++;
+		if( count_video_found > 30 )
+		{
+			err_video = false;
+			count_video_lost = 0;
+			count_video_found = 0;
+		}
 	}
 	else
 	{
-		gst_element_set_state( static_cast<GstElement*>(*data->pipeline), GST_STATE_PLAYING );
+		count_video_lost = 0;
+		count_video_found = 0;
 	}
-	*/
-
 	
-	//--- システムエラー状態
+	
+	//------------------------------------------------
+	//--- 通常動作
+	//------------------------------------------------
 	//
-	if( system_error == true )
+	//--- 重大エラー発生中
+	//
+	if( err_no_rec    ||
+		err_sd_access ||
+		err_system    )
 	{
-		data->led->set_r( data->led->blink );
 		data->led->set_g( data->led->off );
-		data->led->set_y( data->led->off );
-		
-		return G_SOURCE_CONTINUE;
 	}
-	
-	
-	chk_video_cnt++;
-	if( chk_video_cnt >= 10 )
+	//
+	//--- フォーマット中
+	//
+	else
+	if( formatting == true )
 	{
-		chk_video_cnt = 0;
-		
-		//--- 映像入力異常 監視 ( 60秒映像断 )
-		//
-		is_v = is_video(data);
-		if( is_v == false )
+		int res = data->sd_manager->is_formatting();
+		if (res == 0) 	//---フォーマット中
 		{
-			if( count_video_lost > 60 )
-			{
-				count_video_found = 3;
-			}
-			else
-			{
-				count_video_lost++;
-			}
+			data->led->set_g( data->led->two );
+			data->led->set_y( data->led->on );
+			count_sd_format = 0;
 		}
 		else
-		//--- 映像信号安定待ち ( 3秒連続受信 ）
-		//
-		if( count_video_found != 0 )
+		if (res == 1)	//---フォーマット完了
 		{
-			count_video_found--;
+			data->led->set_g( data->led->off );
+			data->led->set_y( data->led->off );
+			formatting = false;
+			ReadRecMax( &file_max );
+			ReadRecIndex( &file_idx );
+		}
+		else
+		if (res == 2)	//---フォーマットerr
+		{
+			data->led->set_g( data->led->off );
+			data->led->set_y( data->led->off );
+			err_sd_access = true;
+		}
+		else
+		if (res == 3)	//---SD size err
+		{
+			data->led->set_y( data->led->on );
+			count_sd_format++;
+			if( count_sd_format > 600 )
+			{
+				count_sd_format = 0;
+				formatting = false;
+				err_sd_access = true;
+			}
 		}
 	}
-	
-	if( count_video_found == 0 )
+	//
+	//--- USB接続中
+	//
+	else
+	if( is_usb_connenct() == true )
 	{
-		if( is_v )
-		{
-			count_video_lost = 0;
-		}
-			
-		//--- sd card フォーマット中
+		data->led->set_g( data->led->blink );
+		
+		count_rec_off = 0;
+		count_sd_none = 0;
+		count_btn_down = 0;
+		count_copy_interval = 0;
+		
+		is_sd_check = false;
+		err_sd_none = false;
+		
+		//--- SDカードチェック
 		//
-		if( formatting == true )
+		if( data->sd_manager->is_sd_card() == true )
 		{
-			data->led->set_r( data->low_battry  ? data->led->blink : data->led->off );
-			data->led->set_g( is_usb_connenct() ?  : data->led->two );
-
-			int res = data->sd_manager->is_formatting();
-			if (res == 0) 	//---フォーマット中
+			if( data->sd_manager->is_root_file_exists()  == false )
 			{
-			//なにもしない
+				data->sd_manager->start_format();
+				formatting = true;
 			}
-			else
-			if (res == 1)	//---フォーマット完了
+		}
+	}
+	//
+	//--- 映像信号なし
+	//
+	else
+	if( err_video == true )
+	{
+		data->led->set_g( data->led->off );
+		
+		count_rec_off = 0;
+		count_sd_none = 0;
+		count_btn_down = 0;
+		count_copy_interval = 0;
+		
+		is_sd_check = false;
+		err_sd_none = false;
+		
+		//--- SDカードチェック
+		//
+		if( data->sd_manager->is_sd_card() == true )
+		{
+			if( data->sd_manager->is_root_file_exists()  == false )
 			{
-				formatting = false;
-				data->led->set_y( data->led->off );
+				data->sd_manager->start_format();
+				formatting = true;
+			}
+		}
+	}
+	//
+	//--- SDカードチェック
+	//
+	else
+	if( is_sd_check == true )
+	{
+		//--- SDカードあり
+		//
+		if( data->sd_manager->is_sd_card() == true )
+		{
+			//--- フォーマット開始
+			//
+			if( data->sd_manager->is_root_file_exists()  == false )
+			{
+				data->sd_manager->start_format();
+				formatting = true;
+			}
+			
+			//--- 録画中へ移行
+			//
+			else
+			{
 				ReadRecMax( &file_max );
 				ReadRecIndex( &file_idx );
+				count_rec_off = 0;
+				count_sd_none = 0;
+				count_btn_down = 0;
+				count_copy_interval = 0;
+				count_sd_wp = 100;
+				count_sd_access_err = 600;
+			}
+			
+			is_sd_check = false;
+			err_sd_none = false;
+		}
+		else
+		if(data->sd_manager->is_writprotect() == 1 )
+		{
+			//writ protect
+			//
+			SPDLOG_INFO("is_writprotect");
+			if( count_sd_wp == 0 )
+			{
+				data->led->set_g( data->led->off );
 				
+				if(!err_sd_none)
+				{
+					//---SDカードなしまたはライトプロテクト ログ
+					//
+					data->logger->LogOut( 8 );		
+				}
+				
+				err_sd_none = true;
 			}
 			else
-			if (res == 2)	//---フォーマットerr
+			if( count_sd_wp > 0 )
 			{
-				//ERR
+				count_sd_wp--;
 			}
 		}
-		//--- sd card あり
-		//
 		else
 		if( count_sd_none == 0 )
 		{
-			//--- USB接続中
-			//
-			if( is_usb_connenct() )
+			data->led->set_g( data->led->off );
+			if(!err_sd_none)
 			{
-				SPDLOG_INFO( "connencted" );
-				
-				count_btn_down = 0;
-				count_rec_off = 0;
-				count_sd_none = 0;
-				count_copy_interval = 0;
-				//alrm_cnt = 0;
-				//tgl_alrm = false;
-			
-				data->led->set_r( data->low_battry  ? data->led->blink : data->led->off );
-				data->led->set_g( data->led->blink );
-				
-				if( usb_sd_access )
-				{
-					data->led->set_y( data->led->on );
-					usb_sd_access = false;
-				}
-				else
-				{
-					data->led->set_y( data->led->off );
-				}
+				//---SDカードなしまたはライトプロテクト ログ
+				//
+				data->logger->LogOut( 8 );		
 			}
-			else
+			err_sd_none = true;
+		}
+		else
+		if( count_sd_none > 0)
+		{
+			count_sd_none--;
 			
-			//--- 録画中
-			//
-			if( count_rec_off == 0 )
+		}
+	}
+	
+	//
+	//--- 録画中
+	//
+	else
+	if( count_rec_off == 0 )
+	{
+		SPDLOG_INFO("録画中");
+		data->led->set_g( data->led->on );
+		
+		//--- SDカードチェック
+		//
+		if( data->sd_manager->is_sd_card() == false )
+		{
+			is_sd_check = true;
+			count_sd_none = 600;		// 60s
+		}
+		
+		
+		//--- 録画停止ボタンチェック
+		//
+		if( is_btn(data) == true )
+		{
+			count_btn_down++;
+			if( count_btn_down == 30 )
 			{
-				SPDLOG_INFO( "not connenct" );
-
-	///			SPDLOG_INFO("on-timer 1");
-				data->led->set_r( data->low_battry  ? data->led->blink : data->led->off );
-				data->led->set_g( data->led->on );
-				
-				//--- SDカードチェック
+				//---録画停止 ログ
 				//
-				if( data->sd_manager->is_sd_card() == false )
-				{
-	///				SPDLOG_INFO("on-timer 2");
-					//--- SDカードの未挿入時間を計測開始
-					//
-					SPDLOG_INFO("いきなり抜かれた");
-					count_sd_none = 600;  //60s
-					data->sd_manager->unmount_sd();
-				}
-				
-				
-				//--- 録画停止ボタンチェック
-				//
-	///			SPDLOG_INFO("on-timer 3");
-				if( is_btn(data) == true )
-				{
-	///				SPDLOG_INFO("on-timer 3-1");
-					count_btn_down++;
-					if( count_btn_down == 30 )
-					{
-	///					SPDLOG_INFO("on-timer 3-2");
-						//--- 録画停止中へ移行
-						//
-	///					SPDLOG_INFO("録画停止");
-						count_rec_off = 300; //30S
-						data->sd_manager->unmount_sd();
-
-					}
-				}
-				else
-				{
-	///				SPDLOG_INFO("on-timer 3-3");
-					count_btn_down = 0;
-				}
-
-				
-				//--- JPEGファイルコピー
-				//
-	///			SPDLOG_INFO("on-timer 4");			
-				count_copy_interval++;
-				if( count_copy_interval >= data->copy_interval )
-				{
-	///				SPDLOG_INFO("on-timer 4-1");
-					count_copy_interval = 0;
-
-					data->led->set_y( data->led->on );
-					//copy();
-					if( !copy_jpeg( data ) )
-					{
-						if( count_sd_access_err < 600 )
-						{
-							count_sd_access_err++;
-						}
-						else
-						{
-							sd_access_err = true;
-						}
-					}
-					
-					if( chk_rec_dt( &no_rec_err ) )
-					{
-						if( no_rec_err )
-						{
-							// 一定日録画なし
-							//Err_status |= 0x02;
-							//logoutcode = 10;
-							//Log_out();
-						}
-					}
-				}
-				else
-				{
-	///				SPDLOG_INFO("on-timer 4-2");
-					data->led->set_y( data->led->off );
-				}
-				
-				
-			}
-			//--- 録画停止中
-			//
-			else
-			{
-				SPDLOG_INFO( "not connenct" );
-				
-	///			SPDLOG_INFO("on-timer 5");
-				data->led->set_r( (count_video_found != 0) ? data->led->blink : 
-								  data->low_battry         ? data->led->blink : data->led->off );
-								  
-				data->led->set_g( (count_video_found != 0) ? data->led->off   : data->led->one );
-				
-				data->led->set_y( data->led->off );
-				
-				count_btn_down = 0;
-				count_copy_interval = 0;
-				
-				if( data->sd_manager->is_sd_card() == false )
-				{
-	///				SPDLOG_INFO("on-timer 5-1");
-					//--- SDカードの未挿入時間を計測開始
-					//
-					//count_sd_none = 72000;		// 2時間
-					count_sd_none = 3000;
-				}
-				else
-				{
-	///				SPDLOG_INFO("on-timer 5-2");
-					//--- 30秒経過で録画中に戻る
-					//
-					count_rec_off--;
-					if(count_rec_off == 0)
-					{
-						data->sd_manager->mount_sd();
-					}
-				}
+				data->logger->LogOut( 12 );
+				count_rec_off = 300;	// 30s 録画停止中へ移行
+				data->sd_manager->unmount_sd();
 			}
 		}
-		//--- sd card なし
-		//
 		else
 		{
-	///		SPDLOG_INFO("on-timer 6");
-			//data->led->set_r( data->led->blink );
-			//data->led->set_g( data->led->off );
-			data->led->set_y( data->led->off );
-			
-			count_rec_off = 0;
 			count_btn_down = 0;
+		}
+		
+		//--- JPEGファイルコピー
+		//
+		count_copy_interval++;
+		count_sd_access_err--;
+		if( ( count_copy_interval >= copy_interval ) &&  !is_sd_check)
+		{
+			data->led->set_y( data->led->on );
 			count_copy_interval = 0;
-         
-			//--- sdカードが挿入された
-			//
-			if( data->sd_manager->is_device_file_exists() == true )
+			
+			
+			if( !copy_jpeg( data ) )
 			{
-				if( wait_cnt < 10 )
+				SPDLOG_INFO("JPEG SAVE FALUT = {}",count_sd_access_err);
+				if( count_sd_access_err == 0 )
 				{
-					wait_cnt++;
-					return G_SOURCE_CONTINUE;
+					//---SDアクセス異常 ログ
+					//
+					data->logger->LogOut( 9);
+					err_sd_access = true;
 				}
 				
-	///			SPDLOG_INFO("on-timer 6-1");
-				count_sd_none = 0;		  //60s
-				err_sd_none = false;	
 				
-				count_rec_off = 300; //30S
-				SPDLOG_INFO("SD挿入");
-				
-
-				//---SDカードがマウントされているか
-				//
-				if ( data->sd_manager->check_proc_mounts() == false )
-				{
-					data->sd_manager->mount_sd();
-					if( data->sd_manager->check_proc_mounts() == false )
-					{
-						SPDLOG_INFO("check_proc_mounts false");
-					}
-				}
-					
-					
-				//---sd card チェック
-				//
-				if( data->sd_manager->is_root_file_exists()  == false )
-				{
-					// なんならフォーマット
-					//フォーマット中はどうする？
-	///				SPDLOG_INFO("on-timer 6-2");
-	///				SPDLOG_INFO("format start");				
-					data->sd_manager->start_format();
-					data->led->set_y( data->led->on );
-					formatting = true;
-				}
-				
-				// REC_INF
-				ReadRecMax( &file_max );
-				ReadRecIndex( &file_idx );
+				int res = data->sd_manager->unmount_sd();
+				SPDLOG_INFO("copy_jpeg FALUT  unmount_sd res = {}",res);
+				res = data->sd_manager->mount_sd();
+				SPDLOG_INFO("copy_jpeg FALUT  mount_sd res = {}",res);
 			}
 			else
 			{
-				wait_cnt = 0;
-				
-				//--- 一定時間SDカードが未挿入
+				count_sd_access_err = 600;				
+			}
+			
+			
+			if ( data->sd_manager->is_device_file_exists() )
+			{
+				//---SDカードがマウントされているか
 				//
-				if( count_sd_none == 1 )
+				if ( !data->sd_manager->check_proc_mounts() )
 				{
-		///			SPDLOG_INFO("on-timer 7");
-					err_sd_none = true;
-					data->led->set_r( data->led->blink );
-					data->led->set_g( data->led->off );
-				}
-				
-				//--- SDカード未挿入時間カウント中
-				//
-				else
-				{
-		///			SPDLOG_INFO("on-timer 8");
-					count_sd_none--;
+					SPDLOG_ERROR("NO mount ");
+					data->sd_manager->unmount_sd();
 				}
 			}
 			
+			
+			//--- 一定日録画なし
+			//
+			if( chk_rec_dt( &err_no_rec ) )
+			{
+				SPDLOG_INFO("一定日録画なし check = {}",err_no_rec);
+				if( err_no_rec )
+				{
+					//---一定日録画ﾁｪｯｸerr ログ
+					//
+					data->logger->LogOut( 10 );
+				}
+			}
 		}
 	}
-	
-	data->led->update_led();
-	
-	
-#if 1
-	
-	// 1秒毎に出力を更新
-	alrm_cnt++;
-	if( alrm_cnt >= 10 )
+	//
+	//--- 録画停止中
+	//
+	else
 	{
-		alrm_cnt = 0;
-		tgl_alrm = !tgl_alrm;
-	}
-	
-	//printf( "test %d %d \n", *p_ena, *p_cnt );
-	
-	if( (count_video_lost > 60) ||										// 映像入力異常
-		err_sd_none || 													// SDカードなし
-		sd_access_err || 												// SDアクセス異常
-		no_rec_err || 													// 一定日録画なし
-		system_error ||										 			// システム異常
-		(*p_ena && *p_cnt) )		// 試験発報
-	{
-		// ijou joutai or broken test
-		data->led->set_r( data->led->blink );
+		data->led->set_g( data->led->one );
 		
-		if( alrm_cnt == 0 )
+		count_rec_off--;
+		if( count_rec_off == 0 )
 		{
-			data->gpio_alrm_a->write_value( false );
-			data->gpio_alrm_b->write_value( false );
+			is_sd_check = true;
+			count_sd_none = 72000;		// 2時間
 		}
+	}
+	
+	
+	//------------------------------------------------
+	//--- アラート出力
+	//------------------------------------------------
+	if( err_low_bat   ||		// LOWバッテリー異常
+		err_video     ||		// 映像入力異常
+		err_sd_none   || 		// SDカードなし
+		err_sd_access || 		// SDアクセス異常
+		err_no_rec    || 		// 一定日録画なし
+		err_system    )			// システム異常
+	{
+		data->led->set_r( data->led->blink );
+		data->gpio_alrm_a->write_value( false );
+		data->gpio_alrm_b->write_value( false );
+	}
+	else
+	if( err_usb_alert > 0 )
+	{
+		data->led->set_r( data->led->off );
+		data->gpio_alrm_a->write_value( false );
+		data->gpio_alrm_b->write_value( false );
 	}
 	else
 	{
-		// normal
 		data->led->set_r( data->led->off );
+		data->gpio_alrm_a->write_value( true );
+		data->gpio_alrm_b->write_value( tgl_alrm );
 		
-		
-		if( alrm_cnt == 0 )
+		alrm_cnt++;
+		if( alrm_cnt >= 10 )
 		{
-			data->gpio_alrm_a->write_value( tgl_alrm );
-			data->gpio_alrm_b->write_value( true );
+			alrm_cnt = 0;
+			tgl_alrm = !tgl_alrm;
 		}
 	}
 	
-#endif
+	if( err_usb_alert > 0 )
+	{
+		err_usb_alert--;
+	}
+	
+	//SPDLOG_INFO("err_usb_alert = {}",err_usb_alert);
+	data->led->update_led();
 	
 	return G_SOURCE_CONTINUE;
 }
@@ -1401,7 +1521,7 @@ static gboolean callback_bus_watch_cb(GstBus * /* bus */, GstMessage *message, g
 		
 		case GST_MESSAGE_EOS:
 			/* end-of-stream */
-			SPDLOG_DEBUG("End of stream.");
+			SPDLOG_INFO("End of stream.");
 			if (data->interrupted.load(std::memory_order_relaxed)) {
 				g_main_loop_quit(data->main_loop);
 			}
@@ -1620,12 +1740,101 @@ static guint video_add_bus_watch(std::shared_ptr<nvr::pipeline> pipeline, callba
 ***********************************************************/
 /*------------------------------------------------------
 ------------------------------------------------------*/
-int GetDownDt( const char* path )
+int setDownDt()
 {
-	int ret;
+	std::filesystem::path dir = "/etc/nvr";
+	std::error_code ec;
+	time_t tme = time( NULL );
+	struct tm* _tm = localtime( &tme ); 
+	int rc;
+
+	unsigned char Y = _tm->tm_year % 100;	// 年 [1900からの経過年数] : (Y + 1900) % 100 = Y
+	unsigned char M = _tm->tm_mon + 1;		// 月 [0-11] 0から始まることに注意
+	unsigned char D = _tm->tm_mday;			// 日 [1-31]
+	unsigned char h = _tm->tm_hour;			// 時 [0-23]
+	unsigned char m = _tm->tm_min;			// 分 [0-59]
+	unsigned char s = _tm->tm_sec;			// 秒 [0-61] 最大2秒までのうるう秒を考慮
+
+	int len = 6;
+	char res[6];
+	res[0] = ::nvr::ByteToBcd( Y );	// YY(BCD)
+	res[1] = ::nvr::ByteToBcd( M );	// MM(BCD)
+	res[2] = ::nvr::ByteToBcd( D );	// DD(BCD)
+	res[3] = ::nvr::ByteToBcd( h );	// hh(BCD)
+	res[4] = ::nvr::ByteToBcd( m );	// mm(BCD)
+	res[5] = ::nvr::ByteToBcd( s );	// ss(BCD)
+	
+	//---ディレクトリの存在確認
+	//
+	if (std::filesystem::is_directory(dir, ec))
+	{
+		if( nvr::file_write( "/etc/nvr/downdt.dat", res, len, &rc ) < 0 )
+		{
+			printf( "file_write() false\n" );
+			return -1;
+		}
+	}
+	else
+	{
+		return -1;
+	}
 	
 	return 0;
 } 
+
+/*------------------------------------------------------
+------------------------------------------------------*/
+int GetDownDt()
+{
+	char buf[6];
+	memset( buf, 0, sizeof(buf) );
+	
+	int rc;
+	int ret = nvr::file_read( "/etc/nvr/downdt.dat", buf, 6, &rc );
+	
+	if( ret < 0 )
+	{
+		SPDLOG_INFO( "{}読み込みerr", "/etc/nvr/downdt.dat");
+		return -1;
+	}
+	
+	printf( "%s : %s\n", "/etc/nvr/downdt.dat", buf );
+	
+	return 0;
+} 
+
+
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+int check_no_sd_dir()
+{
+	std::filesystem::path inf1 = "/mnt/sd/EVC/REC_INF1.dat";
+	std::filesystem::path path("/mnt/sd/EVC");
+	std::error_code ec;
+	
+	//---ディレクトリの存在確認
+	//
+	if (std::filesystem::is_directory(path, ec))
+	{
+		if (!fs::exists(inf1, ec)) 
+		{
+			try
+			{
+				fs::remove( path );
+				system("sync");
+				SPDLOG_INFO("delet_trash");
+			}
+			catch (const fs::filesystem_error& e)
+			{
+				std::cerr << "実行ファイル削除失敗: " << e.what() << '\n';
+				return false;
+			}
+        }
+	}
+	return false;
+}
+
 
 /***********************************************************
 ***********************************************************/
@@ -1644,8 +1853,7 @@ int main(int argc, char **argv)
 	spdlog::set_level(spdlog::level::debug);
 	
 	callback_data_t data{};
-	//SPDLOG_INFO("ver0.2.0");
-	std::cout << "ver0.2.0"<< std::endl;
+	SPDLOG_INFO("ver0.4.3");
 	
 	//GPIO 初期化
 	//
@@ -1666,30 +1874,16 @@ int main(int argc, char **argv)
 		"/dev/mmcblk1p1",
 		"/mnt/sd",
 		"/usr/bin/nvr",
-		logger
+		logger,
+		eeprom
 	);
 	
+	unsigned int rec_cyc;
+	unsigned int com_rec_cyc;	
+	eeprom->Read_RecordCyc( &rec_cyc, &com_rec_cyc );
+	copy_interval = com_rec_cyc/10;
+	SPDLOG_INFO("rec_cyc = {}",copy_interval);
 	
-	//--- callback_data_tにポインターセット
-	//
-	data.led				= led.get();
-	data.sd_manager			= sd_manager.get();
-	data.pipeline			= pipeline;
-	data.logger				= logger;
-	data.gpio_stop_btn		= gpio_stop_btn.get();
-	data.gpio_battery		= gpio_battery.get();
-	data.cminsig			= cminsig.get();
-	data.copy_interval		= 10;
-	data.broken_test_ena	= &broken_test_ena;
-	data.broken_test_cnt	= &broken_test_cnt;
-	data.gpio_alrm_a		= gpio_alrm_a;
-	data.gpio_alrm_b		= gpio_alrm_b;
-	data.usb				= _usb;
-	data.eeprom				= eeprom;
-
-	
-	
-	logger->LogOut( 1 );
 	
 	/*******************************************************************************/
 	ReadRecMax( &file_max );
@@ -1738,7 +1932,21 @@ int main(int argc, char **argv)
 	}
 	
 	
-	_usb = std::make_shared<nvr::usb>( eeprom );
+	_usb = std::make_shared<nvr::usb>( eeprom, logger );
+	
+	//--- USBスレッド
+	//
+	std::thread thread_usb;
+	thread_usb = std::thread( _usb->main_proc, _usb );
+	
+	//--- 優先度を上げる。
+	//
+	//struct sched_param param;
+	//param.sched_priority = std::max( sched_get_priority_max(SCHED_FIFO) / 3, sched_get_priority_min(SCHED_FIFO) );
+	//if( pthread_setschedparam( thread_usb.native_handle(), SCHED_FIFO, &param ) != 0 )
+	//{
+	//	SPDLOG_WARN( "Failed to thread_usb scheduler." );
+	//}
 	
 	
 	SPDLOG_INFO("3");
@@ -1767,6 +1975,34 @@ int main(int argc, char **argv)
 	}
 	
 	
+		//--- callback_data_tにポインターセット
+	//
+	data.led				= led.get();
+	data.sd_manager			= sd_manager.get();
+	data.logger				= logger;
+	data.gpio_stop_btn		= gpio_stop_btn.get();
+	data.gpio_battery		= gpio_battery.get();
+	data.cminsig			= cminsig.get();
+	data.gpio_alrm_a		= gpio_alrm_a;
+	data.gpio_alrm_b		= gpio_alrm_b;
+	data.usb				= _usb;
+	data.eeprom				= eeprom;
+	data.pipeline			= pipeline;
+
+	//---前回電源OFF時刻 ログ
+	//
+	GetDownDt();
+	logger->LogOut( 2 );
+	
+	//---電源ON時刻 ログ
+	//
+	logger->LogOut( 1 );
+	
+	//---録画監視エラー回数チェック
+	//
+	/*******************************************************************************************************************************************/
+								//未作成
+	/*******************************************************************************************************************************************/
 
 
 	//--- ルートファイルシステム 再マウント
@@ -1775,19 +2011,15 @@ int main(int argc, char **argv)
 		SPDLOG_ERROR("Failed to remount /.");
 		exit(-1);
 	}
-	
-	sleep(5);
-	
-	
-	
+
+		
 	led->set_g(led->off);
 	led->set_r(led->off);
 	
 	
 
-	//---ボタン電池の電圧確認
+	//---ボタン電池の電圧確認-ver-0-2-4
 	//
-	#if 0
 	guchar bat;
 	GIOStatus rc = data.gpio_battery->read_value( &bat );
 	if( (rc != G_IO_STATUS_NORMAL) || (bat == 0) )
@@ -1796,26 +2028,13 @@ int main(int argc, char **argv)
 	}
 	else
 	{
+		//---low bat ログ
+		//
+		logger->LogOut( 3 );
+
 		data.low_battry = false;
-	}
-#else
-		data.low_battry = false;
-#endif	
-	
-	std::thread thread_usb;
-	thread_usb = std::thread( _usb->main_proc, _usb );
-	
-	//--- 優先度を上げる。
-	//
-	struct sched_param param;
-	param.sched_priority = std::max( sched_get_priority_max(SCHED_FIFO) / 3, sched_get_priority_min(SCHED_FIFO) );
-	if( pthread_setschedparam( thread_usb.native_handle(), SCHED_FIFO, &param ) != 0 )
-	{
-		SPDLOG_WARN( "Failed to thread_usb scheduler." );
 	}
 
-	
-	
 	
 	
 	//--- callback bus
@@ -1841,14 +2060,16 @@ int main(int argc, char **argv)
 	}
 	
 	
-	
-	
 	//---録画スレッドの作成
 	//
 	SPDLOG_DEBUG("Start video writer.");
 	led->set_g(led->on);
 	
-	
+    data.signal_int_id = g_unix_signal_add(SIGINT, G_SOURCE_FUNC(signal_intr_cb), &data);
+    data.signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), &data);
+    data.signal_user1_id = g_unix_signal_add(SIGUSR1, G_SOURCE_FUNC(signal_user1_cb), &data);
+    data.signal_user2_id = g_unix_signal_add(SIGUSR2, G_SOURCE_FUNC(signal_user2_cb), &data);
+		
 	//---pipelineを有効可
 	//
 	SPDLOG_DEBUG("Start pipeline.");
@@ -1872,13 +2093,54 @@ int main(int argc, char **argv)
 END:
 	//---終了処理
 	//
+	SPDLOG_INFO("END process start");
 	data.interrupted.store(true, std::memory_order_relaxed);
 	
 	_usb->th_end = 1;
+	
+	#if 1
+	{
+		char buf[10];
+		memset( buf, 0, sizeof(buf) );
+		
+		int len = 10;
+		int rc;
+		if( nvr::file_write( "/var/tmp/tmp.dat", buf, len, &rc ) < 0 )
+		{
+			printf( "file_write() false\n" );
+			return false;
+		}
+		
+		printf( "%s write.\n", "/var/tmp/tmp.dat" );
+	}
+	#endif
+	//system( "sync" );
+	
+	
 	if( thread_usb.joinable() )
 	{
 		thread_usb.join();
 	}
+	
+	SPDLOG_INFO("thread_usb END");
+
+	
+	if (data.signal_int_id)
+    {
+        g_source_remove(data.signal_int_id);
+    }
+    if (data.signal_term_id)
+    {
+        g_source_remove(data.signal_term_id);
+    }
+    if (data.signal_user1_id)
+    {
+        g_source_remove(data.signal_user1_id);
+    }
+    if (data.signal_user2_id)
+    {
+        g_source_remove(data.signal_user2_id);
+    }
 	
 	
 	if( data.bus_watch_id )
@@ -1892,6 +2154,8 @@ END:
 	}
 	
 	
+	SPDLOG_INFO("END process END");
+	
 	
 	std::exit(0);
 }
@@ -1899,6 +2163,7 @@ END:
 /***********************************************************
 	end of file
 ***********************************************************/
+
 
 
 
