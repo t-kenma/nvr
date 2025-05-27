@@ -62,7 +62,8 @@ struct callback_data_t
 						signal_int_id(0),
 						signal_term_id(0),
 						signal_user1_id(0),
-						signal_user2_id(0)
+						signal_user2_id(0),
+						eeprom(nullptr)
 	{}
 	
 	guint timer1_id;
@@ -108,11 +109,10 @@ static const char *g_quit_name = "nrs-video-recorder-quit";
 int count_btn_down = 0;
 int count_rec_off = 0;
 int count_sd_none = 0;
-
 int count_video_lost = 0;
 int count_video_found = 0;
-
 int count_sd_access_err = 0;
+int recwachtime = 0;
 
 bool system_error = false;
 bool formatting = false;
@@ -130,7 +130,9 @@ char last_save_path[2048];
 
 int err_usb_alert = 0;
 unsigned int copy_interval = 3;
-
+int writefno = 0;
+int lastfno = 0;
+int recwatchcount = 0;
 
 static void on_interrupted(callback_data_t *data);
 gboolean send_interrupt_message(GstElement *pipeline);
@@ -890,6 +892,7 @@ bool copy_jpeg( callback_data_t* data )
 		if(overwriteByteInJPEG( data, save_path ) == 0)
 		{
 			SPDLOG_INFO("jpeg save");
+			writefno = file_idx;
 		}
 		else
 		{
@@ -1081,21 +1084,25 @@ static gboolean on_timer( gpointer udata )
 	static bool err_video		= false;		// 映像入力異常
 	static bool err_sd_none		= false;		// SDカードなし
 	static bool err_low_bat		= false;		// LOWバッテリー異常
-	
-	static bool is_sd_check		= true;			// 
-	
+	static bool is_sd_check		= true;			// SDカードチェック
 	static int chk_video_cnt = 0;
-	
 	static bool is_v = false;
-	
 	static int wait_cnt = 0;
-	
 	static bool tgl_alrm = false;
 	static int alrm_cnt = 0;
 	
-	//--- 毎回黄色LEDを消す
-	data->led->set_y( data->led->off );
 	
+	//--- 黄色LED
+	if( data->usb->usb_sd_access )
+	{
+		data->usb->usb_sd_access = false;
+		data->led->set_y( data->led->on );
+	}
+	else
+	{
+		data->led->set_y( data->led->off );
+	}
+
 	
 	//------------------------------------------------
 	//--- ビデオ信号監視
@@ -1165,6 +1172,7 @@ static gboolean on_timer( gpointer udata )
 			formatting = false;
 			ReadRecMax( &file_max );
 			ReadRecIndex( &file_idx );
+			writefno = 0;
 		}
 		else
 		if (res == 2)	//---フォーマットerr
@@ -1270,6 +1278,7 @@ static gboolean on_timer( gpointer udata )
 				count_copy_interval = 0;
 				count_sd_wp = 100;
 				count_sd_access_err = 600;
+				recwachtime = 1200;
 			}
 			
 			is_sd_check = false;
@@ -1326,7 +1335,7 @@ static gboolean on_timer( gpointer udata )
 	else
 	if( count_rec_off == 0 )
 	{
-		SPDLOG_INFO("録画中");
+		//SPDLOG_INFO("録画中");
 		data->led->set_g( data->led->on );
 		
 		//--- SDカードチェック
@@ -1414,7 +1423,37 @@ static gboolean on_timer( gpointer udata )
 					data->logger->LogOut( 10 );
 				}
 			}
+		}		
+		
+		
+		//------------------------------------------------
+		//--- 録画監視
+		//------------------------------------------------
+		if( recwachtime == 0)
+		{
+			if(lastfno == writefno)
+			{	//前回と変化なし
+				recwatchcount ++;
+				SPDLOG_ERROR("recwach err{}",recwatchcount);
+				char val = static_cast<unsigned char>(recwatchcount);
+				data->eeprom->Write_RecWatchCount(val);				
+				//ソフトリセット
+				kill(getppid(), SIGUSR1);
+			}
+			if(recwatchcount != 0 ){
+				SPDLOG_INFO("recwatchcount != 0");
+				char val = static_cast<unsigned char>(recwatchcount);
+				data->eeprom->Write_RecWatchCount(val);
+			} 
+			lastfno = writefno;	
+			recwachtime = 1200;
 		}
+		else
+		if(recwachtime > 0)
+		{
+			recwachtime--;
+		}
+
 	}
 	//
 	//--- 録画停止中
@@ -1883,25 +1922,24 @@ int main(int argc, char **argv)
 	eeprom->Read_RecordCyc( &rec_cyc, &com_rec_cyc );
 	copy_interval = com_rec_cyc/10;
 	SPDLOG_INFO("rec_cyc = {}",copy_interval);
-	
+
+	unsigned char  cnt;
+	eeprom->Read_RecWatchCount( &cnt );
+	recwatchcount = (int)cnt;
+	SPDLOG_INFO("recwatchcount1 = {}",recwatchcount);
 	
 	/*******************************************************************************/
 	ReadRecMax( &file_max );
 	ReadRecIndex( &file_idx );
-		
+
+
+	//---録画監視初期化
+	//
+	writefno = file_idx;
+	lastfno = file_idx;
+	recwachtime = 1200;
 	
-	/*
-	if (pwd_decoder->open(true)) {
-		SPDLOG_ERROR("Failed to open pwd_decoder."));
-		exit(-1);
-	}
-	
-	if (rst_decoder->open(true)) {
-		SPDLOG_ERROR("Failed to open rst_decoder.");
-		exit(-1);
-	}
-	*/
-	
+
 	if (cminsig->open()) {
 		SPDLOG_ERROR("Failed to open cminsig.");
 		exit(-1);
@@ -2163,6 +2201,7 @@ END:
 /***********************************************************
 	end of file
 ***********************************************************/
+
 
 
 

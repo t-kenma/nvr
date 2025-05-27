@@ -166,19 +166,19 @@ namespace nvr
 	usb::usb( std::shared_ptr<nvr::eeprom> eeprom, std::shared_ptr<nvr::logger> logger )
 		: eeprom_( eeprom )
 	{
-		printf( "usb::usb()" );
+//		printf( "usb::usb()" );
 		
 		thread_args.handle_out1 = -1;
 		thread_args.handle_in1  = -1;
 		thread_args.handle_out2 = -1;
 		thread_args.handle_in2  = -1;
 		
-		SPDLOG_INFO("usb_raw_gadget");
+//		SPDLOG_INFO("usb_raw_gadget");
 		g_usb = new usb_raw_gadget("/dev/raw-gadget");
 		//usb->set_debug_level(debug_level);
-		SPDLOG_INFO("init");
+//		SPDLOG_INFO("init");
 		g_usb->init(USB_SPEED_HIGH, driver, device);
-		SPDLOG_INFO("run");
+//		SPDLOG_INFO("run");
 		connected = false;
 		
 		logger_ = logger;
@@ -280,7 +280,6 @@ namespace nvr
 		{
 			// プロセスの複製失敗
 			//
-			//SPDLOG_ERROR( "Failed to fork process: {}", strerror( errno ) );
 			SPDLOG_INFO( "Failed to fork process: {}", strerror( errno ) );
 			return -1;
 		} 
@@ -935,6 +934,12 @@ namespace nvr
 		char ret;
 		
 		char buf[32];
+		
+		//---調時（旧時刻） ログ
+		//
+		logger_->LogOut( 5 );
+		
+		
 		sprintf( buf, "date -s \"20%02X/%02X/%02X %02X:%02X:%02X\"", 
 				 YY, MM, DD, hh, mm, ss );
 		
@@ -965,9 +970,7 @@ namespace nvr
 //			printf( "system( \"hwclock --systohc\" ) rt=%d \n", rt );
 			if( rt >= 0 )
 			{
-				//---調時（旧時刻） ログ
-				//
-				logger_->LogOut( 5 );
+			
 				
 				
 				//---調時（新時刻） ログ
@@ -1131,12 +1134,14 @@ namespace nvr
 	
 	/*----------------------------------------------------------
 	----------------------------------------------------------*/
-	void usb::on_cmd_get_eeprom( struct io_thread_args* p_thread_args, int rcv_len )
+	void usb::on_cmd_get_eeprom( struct io_thread_args* p_thread_args, int rcv_len, unsigned short* last_addr )
 	{
 		recv_bulk( p_thread_args, p_thread_args->handle_out2, req_buf, rcv_len );
 		
 		int addr = ((int)req_buf[1] << 8) | req_buf[0];
-		int size = ((int)req_buf[3] << 8) | req_buf[2];;
+		int size = ((int)req_buf[3] << 8) | req_buf[2];
+		
+		*last_addr = addr;
 		
 //		printf( "get_eeprom() addr=0x%x size=%d \n", addr, size );
 		
@@ -1228,13 +1233,12 @@ namespace nvr
 		
 		// プロセスを複製し子プロセスを作成
 		pid_t pid = fork();
-		SPDLOG_INFO( " pid = {}", pid );
+//		SPDLOG_INFO( " pid = {}", pid );
 		
 		if( pid < 0 )
 		{
 			// プロセスの複製失敗
 			//
-			//SPDLOG_ERROR( "Failed to fork process: {}", strerror( errno ) );
 			SPDLOG_INFO( "Failed to fork process: {}", strerror( errno ) );
 			return;
 		} 
@@ -1243,7 +1247,7 @@ namespace nvr
 		{
 			// 子プロセス処理
 			//
-			SPDLOG_INFO( " child pid = {}", pid );
+//			SPDLOG_INFO( " child pid = {}", pid );
 			
 			int rd_len;
 			while( size > 0 )
@@ -1280,9 +1284,11 @@ namespace nvr
 				
 				//memcpy( &io_data.data[0], res_buf, io_data.inner.length );
 				
-//				printf( "send_bulk() ep_write() ep_handle=%d len=%d\n", p_thread_args->handle_in2, io_data.inner.length );
+				debug_dump_data( io_data.data, io_data.inner.length );
+				
+				printf( "send_bulk() ep_write() ep_handle=%d len=%d\n", p_thread_args->handle_in2, io_data.inner.length );
 				int snded = p_thread_args->usb->ep_write( (struct usb_raw_ep_io*)&io_data );
-//				printf( "send_bulk() ep_write() ep_handle=%d ret=%d\n", p_thread_args->handle_in2, snded );
+				printf( "send_bulk() ep_write() ep_handle=%d ret=%d\n", p_thread_args->handle_in2, snded );
 				
 				if( snded < 0 )
 				{
@@ -1380,7 +1386,7 @@ namespace nvr
 		memcpy( &sts[1], &len, 4 );			// 応答データ長
 		
 		// ステータス応答
-		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
+		//send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
 	}
 	
 	/*----------------------------------------------------------
@@ -1421,15 +1427,17 @@ namespace nvr
 		
 		struct io_thread_args* p_thread_args = (struct io_thread_args*)&thread_args;
 		
-		char buf[128];
+		unsigned char buf[128];
 		int len;
 		int ret;
 		
+		unsigned char last_cmd = 0xFF;
+		unsigned short last_addr = 0x0000;
 		
 		while( 1 )
 		{
 //			printf( "  call recv_bulk() start\n" );
-			ret = recv_bulk_ex( p_thread_args, p_thread_args->handle_out1, buf, 128, true );
+			ret = recv_bulk_ex( p_thread_args, p_thread_args->handle_out1, (char*)buf, 128, true );
 //			printf( "  call recv_bulk() end ret=%d\n", ret );
 			
 			if( ret < 0 )
@@ -1437,34 +1445,41 @@ namespace nvr
 				break;
 			}
 			
-			char* p = buf;
+			unsigned char* p = buf;
 			
 			while( ret >= 5 )
 			{
-				int cmd = p[0];
+				unsigned char cmd = p[0];
 				int rcv_len;
 				memcpy( &rcv_len, &p[1], 4 );
 				
-				switch( cmd )
+				if( (cmd == 11) && 
+					((last_cmd != 10) || (last_addr != 0x21)) )
 				{
-				case  0:	on_cmd_system_reset( p_thread_args, rcv_len );			break;
-				case  1:	on_cmd_load_info( p_thread_args, rcv_len );				break;
-				case  2:	on_cmd_load_rec_data( p_thread_args, rcv_len );			break;
-				case  3:	on_cmd_load_rec_date( p_thread_args, rcv_len );			break;
-				case  4:	on_cmd_load_rec_interval( p_thread_args, rcv_len );		break;
-				case  5:	on_cmd_check_folder_dir1( p_thread_args, rcv_len );		break;
-				case  6:	on_cmd_check_folder_dir12( p_thread_args, rcv_len );	break;
-				case 13:	on_cmd_check_folder_dir123( p_thread_args, rcv_len );	break;
-				case  7:	on_cmd_set_rtc( p_thread_args, rcv_len );				break;
-				case  8:	on_cmd_get_rtc( p_thread_args, rcv_len );				break;
-				case  9:	on_cmd_set_eeprom( p_thread_args, rcv_len );			break;
-				case 10:	on_cmd_get_eeprom( p_thread_args, rcv_len );			break;
-				case 11:	on_cmd_get_ver( p_thread_args, rcv_len );				break;
-				case 12:	on_cmd_update_fw( p_thread_args, rcv_len );				break;
-				case 14:	on_cmd_broken_output_test( p_thread_args, rcv_len );	break;
-				default:	on_cmd_unknown( p_thread_args, rcv_len );				break;
+					break;
 				}
 				
+				switch( cmd )
+				{
+				case  0:	on_cmd_system_reset( p_thread_args, rcv_len );				break;
+				case  1:	on_cmd_load_info( p_thread_args, rcv_len );					break;
+				case  2:	on_cmd_load_rec_data( p_thread_args, rcv_len );				break;
+				case  3:	on_cmd_load_rec_date( p_thread_args, rcv_len );				break;
+				case  4:	on_cmd_load_rec_interval( p_thread_args, rcv_len );			break;
+				case  5:	on_cmd_check_folder_dir1( p_thread_args, rcv_len );			break;
+				case  6:	on_cmd_check_folder_dir12( p_thread_args, rcv_len );		break;
+				case 13:	on_cmd_check_folder_dir123( p_thread_args, rcv_len );		break;
+				case  7:	on_cmd_set_rtc( p_thread_args, rcv_len );					break;
+				case  8:	on_cmd_get_rtc( p_thread_args, rcv_len );					break;
+				case  9:	on_cmd_set_eeprom( p_thread_args, rcv_len );				break;
+				case 10:	on_cmd_get_eeprom( p_thread_args, rcv_len, &last_addr );	break;
+				case 11:	on_cmd_get_ver( p_thread_args, rcv_len );					break;
+				case 12:	on_cmd_update_fw( p_thread_args, rcv_len );					break;
+				case 14:	on_cmd_broken_output_test( p_thread_args, rcv_len );		break;
+				default:	on_cmd_unknown( p_thread_args, rcv_len );					break;
+				}
+				
+				last_cmd = cmd;
 				waitpid( -1, NULL, 0 );
 				p += 5;
 				ret -= 5;
@@ -1571,7 +1586,7 @@ namespace nvr
 			usb->vbus_draw(me56ps2_config_descriptors.config.bMaxPower);
 			usb->configure();
 			
-			SPDLOG_INFO("ep_enable");
+//			SPDLOG_INFO("ep_enable");
 				
 			if( thread_args.handle_in1 >= 0 )
 			{
@@ -1659,7 +1674,7 @@ namespace nvr
 		        pthread_create( &threadr, NULL, bulk_thread, this );
 			}
 			
-			printf("USB configurated.\n");
+//			printf("USB configurated.\n");
 			pkt->header.length = 0;
 			return true;
 		}
@@ -1673,18 +1688,18 @@ namespace nvr
 		if( e->is_event(USB_TYPE_VENDOR, 0x01) )
 		{
 			pkt->header.length = 0;
-			SPDLOG_INFO("USB_TYPE_VENDOR001");
+//			SPDLOG_INFO("USB_TYPE_VENDOR001");
 			return true;
 		}
 		
 		if( e->is_event(USB_TYPE_VENDOR) )
 		{
 			pkt->header.length = 0;
-			SPDLOG_INFO("USB_TYPE_VENDOR");
+//			SPDLOG_INFO("USB_TYPE_VENDOR");
 			return true;
 		}
 		
-		printf("process_control_packet() end. type=%d req=%d \n", e->get_request_type(), e->get_request() );
+//		printf("process_control_packet() end. type=%d req=%d \n", e->get_request_type(), e->get_request() );
 		
 		pkt->header.length = 0;
 		return true;
@@ -1736,3 +1751,4 @@ namespace nvr
 
 
 }
+

@@ -457,7 +457,7 @@ bool get_update_file( char* name )
 		std::cout << filename << std::endl;
 		
 		pos = filename.length() - filename.find(".zip");
-		SPDLOG_INFO("isfile pos={}",pos);
+		
 		if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".zip") {
 			SPDLOG_INFO("ZIP file detected: {}", filename);
 		} else {
@@ -679,13 +679,13 @@ static gboolean callback_signal_user1(gpointer udata)
 	SPDLOG_INFO("SIGUSER1 receiverd.");
 	callback_data_t* data = static_cast<callback_data_t*>(udata);
 	
-	//video_send_message(static_cast<GstElement*>(*data->pipeline));
-	data->interrupted.store(true, std::memory_order_relaxed);
+	
 	data->b_reboot = true;
 	
 
 	/* remove signal handler */
 	data->signal_user1_id = 0;
+	g_main_loop_quit(data->main_loop);
 	return G_SOURCE_REMOVE;
 }
 
@@ -975,12 +975,11 @@ int main(int argc, char **argv)
 	//signal_int_id  = g_unix_signal_add(SIGINT, G_SOURCE_FUNC(signal_intr_cb), main_loop);
 	//signal_term_id = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(signal_term_cb), main_loop);
 	
-#ifdef G_OS_UNIX
-	data.signal_int_id   = g_unix_signal_add(SIGINT,  G_SOURCE_FUNC(callback_signal_intr), &data);
-	data.signal_term_id  = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(callback_signal_term), &data);
+//	data.signal_int_id   = g_unix_signal_add(SIGINT,  G_SOURCE_FUNC(callback_signal_intr), &data);
+//	data.signal_term_id  = g_unix_signal_add(SIGTERM, G_SOURCE_FUNC(callback_signal_term), &data);
 	data.signal_user1_id = g_unix_signal_add(SIGUSR1, G_SOURCE_FUNC(callback_signal_user1), &data);
 	data.signal_user2_id = g_unix_signal_add(SIGUSR2, G_SOURCE_FUNC(callback_signal_user2), &data);
-#endif
+
 	
 	
 	g_main_loop_run(data.main_loop);

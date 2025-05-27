@@ -55,7 +55,7 @@ namespace nvr
 		void on_cmd_set_rtc( struct io_thread_args* p_thread_args, int rcv_len );
 		void on_cmd_get_rtc( struct io_thread_args* p_thread_args, int rcv_len );
 		void on_cmd_set_eeprom( struct io_thread_args* p_thread_args, int rcv_len );
-		void on_cmd_get_eeprom( struct io_thread_args* p_thread_args, int rcv_len );
+		void on_cmd_get_eeprom( struct io_thread_args* p_thread_args, int rcv_len, unsigned short* last_addr );
 		void on_cmd_get_ver( struct io_thread_args* p_thread_args, int rcv_len );
 		void on_cmd_update_fw( struct io_thread_args* p_thread_args, int rcv_len );
 		void on_cmd_broken_output_test( struct io_thread_args* p_thread_args, int rcv_len );
@@ -87,3 +87,4 @@ namespace nvr
 	};
 }
 #endif
+
