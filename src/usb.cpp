@@ -496,9 +496,6 @@ namespace nvr
 					 dir1, dir2, file_no ); 
 		}
 		
-		SPDLOG_INFO("count = {}",count);
-		SPDLOG_INFO("get_rec_data_path = {}",path);
-		
 		return strlen( path );
 	}
 	
