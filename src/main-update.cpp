@@ -69,79 +69,18 @@ pid_t child = -1;     //初期化時は-1
 bool check_proc_mounts();
 bool is_sd_card();
 bool get_update_file( char* name );
-bool get_execute_file( char* name );
 bool execute();
 bool update();
 bool check_video();
 int _do_reboot() noexcept;
 bool check_power(callback_data_t *data);
 bool check_cminsig(callback_data_t *data);
+
 int g_counter_ = 0;
-int setDownDt();
+bool is_child = false;
 
 /***********************************************************
 ***********************************************************/
-
-/*----------------------------------------------------------
-----------------------------------------------------------*/
-
-/*
-static gboolean timer1_cb(gpointer udata) 
-{
-	callback_data_t *data = static_cast<callback_data_t *>(udata);
-	//1000ms タイマー処理
-	
-	//
-	
-	check_power(data);
-
-	if( data->update_ok )
-	{
-		if(!is_sd_card())
-		{
-			SPDLOG_INFO("_do_reboot");
-			data->_grn->write_value(true);
-            data->_red->write_value(true);
-            data->_yel->write_value(true);
-            data->b_reboot = true;
-			g_main_loop_quit(data->main_loop);
-			return G_SOURCE_CONTINUE;
-		}
-		
-	    if( g_counter_ >= 0 && g_counter_ < 3 )
-        {
-            data->_grn->write_value(true);
-            data->_red->write_value(true);
-            data->_yel->write_value(true);
-        }
-        else
-        if( g_counter_ >= 3 && g_counter_ < 5 )
-        {
-            data->_grn->write_value(false);
-            data->_red->write_value(false);
-            data->_yel->write_value(false);
-        }
-
-        g_counter_++;
-        if( g_counter_ >= 5)
-        {
-            g_counter_ = 3;
-        }        
-		
-		return G_SOURCE_CONTINUE;
-	}
-	
-	if( update() == true )
-	{
-		//---SD抜き待ち
-		//
-		data->update_ok = true;
-	}
-	
-	return G_SOURCE_CONTINUE;
-}
-*/
-
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
 static gboolean timer1_cb(gpointer udata) 
@@ -188,13 +127,33 @@ static gboolean timer1_cb(gpointer udata)
 		
 		return G_SOURCE_CONTINUE;
 	}
-	
+	else
+	{
+		int status;
+		pid_t result = waitpid(child, &status, WNOHANG);
+
+		if (result == child) {
+			SPDLOG_INFO("child is dead");
+			SPDLOG_INFO("child ReStart");
+			execute();			
+		}
+		else
+		if( result != 0 )
+		{
+			SPDLOG_ERROR("NO child");
+			execute();
+		}
+	}
+		
 	if( update() == true )
 	{
 		//---SD抜き待ち
 		//
 		data->update_ok = true;
 	}
+	
+	
+
 	
 	return G_SOURCE_CONTINUE;
 }
@@ -263,24 +222,21 @@ bool check_power(callback_data_t *data)
 {
 	guchar value;
 	if (!data) {
-        SPDLOG_INFO("data is null");
+//        SPDLOG_INFO("data is null");
         return false;
     }
 
     if (!data->gpio_power) {
-        SPDLOG_INFO("data->gpio_power is null");
+//        SPDLOG_INFO("data->gpio_power is null");
         return false;
     }
     
 	data->gpio_power->read_value(&value);
-	SPDLOG_INFO("power pin = {}",value);
+//	SPDLOG_INFO("power pin = {}",value);
 	if (value == 1){
 		return false;
 	}
 	
-	setDownDt();
-	//log
-	//
 	
 	//main kill
 	//
@@ -301,58 +257,6 @@ bool check_power(callback_data_t *data)
 	SPDLOG_INFO("power reboot",value);
 	return true;
 }
-
-
-/*------------------------------------------------------
-------------------------------------------------------*/
-int setDownDt()
-{
-	std::filesystem::path dir = "/etc/nvr";
-	std::error_code ec;
-	time_t tme = time( NULL );
-	struct tm* _tm = localtime( &tme ); 
-	int rc;
-
-	/*
-	unsigned char Y = _tm->tm_year % 100;	// 年 [1900からの経過年数] : (Y + 1900) % 100 = Y
-	unsigned char M = _tm->tm_mon + 1;		// 月 [0-11] 0から始まることに注意
-	unsigned char D = _tm->tm_mday;			// 日 [1-31]
-	unsigned char h = _tm->tm_hour;			// 時 [0-23]
-	unsigned char m = _tm->tm_min;			// 分 [0-59]
-	unsigned char s = _tm->tm_sec;			// 秒 [0-61] 最大2秒までのうるう秒を考慮
-
-	int len = 6;
-	char res[6];
-	res[0] = ::nvr::ByteToBcd( Y );	// YY(BCD)
-	res[1] = ::nvr::ByteToBcd( M );	// MM(BCD)
-	res[2] = ::nvr::ByteToBcd( D );	// DD(BCD)
-	res[3] = ::nvr::ByteToBcd( h );	// hh(BCD)
-	res[4] = ::nvr::ByteToBcd( m );	// mm(BCD)
-	res[5] = ::nvr::ByteToBcd( s );	// ss(BCD)
-	*/
-	
-	int len = 2;
-	char res[2];
-	res[0] = 1;
-	res[1] = 2;
-	
-	//---ディレクトリの存在確認
-	//
-	if (std::filesystem::is_directory(dir, ec))
-	{
-		if( nvr::file_write( "/etc/nvr/downdt2.dat", res, len, &rc ) < 0 )
-		{
-			printf( "file_write() false\n" );
-			return -1;
-		}
-	}
-	else
-	{
-		return -1;
-	}
-	
-	return 0;
-} 
 
 
 /*----------------------------------------------------------
@@ -408,12 +312,12 @@ int uncompress_encrypted( const char* zip_path )
 		    return 2;
 		}
 
-		SPDLOG_INFO("chmod succeeded");	
+//		SPDLOG_INFO("chmod succeeded");	
 	} 
 	else
 	{
 	    // fork 失敗
-	    std::perror("fork failed");
+	    SPDLOG_ERROR("fork failed");	
 	    return 1;
 	}
 	
@@ -458,54 +362,28 @@ bool get_update_file( char* name )
 		
 		pos = filename.length() - filename.find(".zip");
 		
-		if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".zip") {
-			SPDLOG_INFO("ZIP file detected: {}", filename);
-		} else {
+		if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".zip")
+		{
+//			SPDLOG_INFO("ZIP file detected: {}", filename);
+		}
+		else
+		{
 			continue;
 		}
-		SPDLOG_INFO("ZIP");
+//		SPDLOG_INFO("ZIP");
 		
 		//最初に見つかったファイル名を返す
 		//
 		std::strcpy(name, filename.c_str());
 		
 		
-		SPDLOG_INFO("is update file");
+//		SPDLOG_INFO("is update file");
 		return true;
 	}
 	
 	return false;
 }
 
-/*----------------------------------------------------------
-----------------------------------------------------------*/
-bool get_execute_file( char* name )
-{
-	const char *exe_dir = "/var/tmp/app_exe"; 
-	fs::path path(exe_dir);
-	std::error_code ec;
-	
-	//---/tmp/app_exeディレクトリの存在確認
-	//
-	if (!fs::exists(path, ec))
-	{
-		if (!fs::create_directories(path, ec)) {
-			SPDLOG_ERROR("Failed to make directory: {}.", path.c_str());   
-		}
-		return false;
-	}
-	
-	
-	for (const fs::directory_entry& x : fs::directory_iterator(EXECUTE)) 
-	{
-		std::cout << x.path() << std::endl;
-		std::string filename = x.path().filename().string();
-		std::strcpy(name, filename.c_str());
-		return true;
-	}
-	
-	return false;
-}
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
@@ -544,6 +422,7 @@ bool execute()
 		
 		//子プロセスの終了
 		//
+		SPDLOG_INFO("APP killed");
 		exit(-1);
 	}
     else 
@@ -618,7 +497,7 @@ bool update()
 	}
 	
 	
-		
+	
 	SPDLOG_INFO("update() true");
 	return true;
 }
@@ -636,7 +515,6 @@ int _do_reboot() noexcept
 	
 	//---プロセスの複製
 	//
-	SPDLOG_INFO("in");
 	_pid = fork();
 	SPDLOG_INFO(" pid = {}",_pid);
 	if (_pid < 0)
@@ -662,7 +540,7 @@ int _do_reboot() noexcept
 
 	
 	if (!WIFEXITED(status)) {
-		SPDLOG_INFO("_do_reboot() return -1;");
+		SPDLOG_ERROR("_do_reboot() return -1;");
 		return -1;
 	}
 	
@@ -759,9 +637,6 @@ static bool wait_power_pin(std::shared_ptr<nvr::gpio_in> pm, callback_data_t *da
 	sigaddset (&mask, SIGUSR1);
 	sigaddset (&mask, SIGUSR2);
 	
-	/**********************************************************/
-	//アップローダーに持っていく
-	/**********************************************************/
 	if (sigprocmask (SIG_BLOCK, &mask, nullptr) == -1) {
 		SPDLOG_ERROR("Failed to sigprocmask: {}", strerror(errno));
 		return ret;
@@ -788,10 +663,10 @@ static bool wait_power_pin(std::shared_ptr<nvr::gpio_in> pm, callback_data_t *da
 	}
 	
 	/**********************************************************/
-	while (true)
-	{
+	for(int i = 0; i < 5; i++)
+	{ 
 		int rc;
-		rc = epoll_wait(epfd, &events, 1, 1000);
+		rc = epoll_wait(epfd, &events, 1, 100);
 		if (rc > 0)
 		{
 			struct signalfd_siginfo info = {0};
@@ -820,23 +695,20 @@ static bool wait_power_pin(std::shared_ptr<nvr::gpio_in> pm, callback_data_t *da
 			}
 		}
 		
-		if (rc == 0)
+		pm->read_value(&new_value);
+		SPDLOG_INFO("wait_power_pin pin = {}",new_value);
+		if (new_value == 0) 
 		{
-			pm->read_value(&new_value);
-			SPDLOG_INFO("wait_power_pin pin = {}",new_value);
-			if (new_value == 1) 
-			{
-				break;
-			}
-			else
-			if(first)
-			{
-				SPDLOG_INFO("wait_power_pin-9");
-				SPDLOG_INFO("Wait power pin to be high.");
-				first = false;
-			}
+			SPDLOG_INFO("i = {}",i);
+			i = 0;
 		}
-		sleep(1);
+		else
+		if(first)
+		{
+			first = false;
+		}
+		
+		//sleep(1);
 	}
 	
 	SPDLOG_INFO("wait_power_pin ok");
@@ -1039,7 +911,3 @@ END:
 /***********************************************************
 	end of file
 ***********************************************************/
-
-
-
-

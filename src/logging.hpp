@@ -34,6 +34,7 @@ namespace nvr
 
 		int LogOut( unsigned char code );
 		int LogOut( unsigned char code, struct tm* _tm );
+		int LogOut( unsigned char code, unsigned char* buf );
 
 	private:
 	std::shared_ptr<nvr::eeprom> eeprom_;

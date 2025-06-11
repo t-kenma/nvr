@@ -63,13 +63,62 @@ namespace nvr
 	
 	/*------------------------------------------------------
 	------------------------------------------------------*/
+	int logger::LogOut( unsigned char code, unsigned char* buf )
+	{
+		int ret;
+		ret = eeprom_->Read_Address( &logout_address_ );
+		if( ret < 0 )
+		{
+			return -1;
+		}
+		
+		unsigned char data[14];
+		::nvr::ByteToCC( code, &data[ 0] );
+		memcpy(&data[2], buf, 12);
+		
+		
+//		printf( "WRITE LOG ADDR=%d\n", logout_address_ );
+//		printf( "WRITE LOG DATA=" );
+//		for( int i=0; i< 14; i++ )
+//		{
+//			printf( "%02X ", data[i] );
+//		}
+//		printf( "\n" );
+
+		ret = eeprom_->Write_LogData( logout_address_, data );
+		if( ret == -1 )
+		{
+			if( code >= 18 )
+			{
+				return -1;
+			}
+			
+			ret = eeprom_->Read_Address( &logout_address_ );
+			if( ret < 0 )
+			{
+				return -1;
+			}
+			
+			time_t tme = time( NULL );
+			struct tm* _tm = localtime( &tme ); 
+			MakeLogData( 19, _tm, data );	
+			eeprom_->Write_LogData( logout_address_, data );
+			
+		}
+		
+		return 0;
+	}
+	
+	
+	/*------------------------------------------------------
+	------------------------------------------------------*/
 	int logger::LogOut( unsigned char code, struct tm* _tm )
 	{
 		int ret;
 		ret = eeprom_->Read_Address( &logout_address_ );
 		if( ret < 0 )
 		{
-			return ret;
+			return -1;
 		}
 		
 		unsigned char data[14];
@@ -82,7 +131,26 @@ namespace nvr
 //			printf( "%02X ", data[i] );
 //		}
 //		printf( "\n" );
+
+		ret = eeprom_->Write_LogData( logout_address_, data );
+		if( ret == -1 )
+		{
+			if( code >= 18 )
+			{
+				return -1;
+			}
+			
+			ret = eeprom_->Read_Address( &logout_address_ );
+			if( ret < 0 )
+			{
+				return -1;
+			}
+			
+			MakeLogData( 19, _tm, data );	
+			eeprom_->Write_LogData( logout_address_, data );
+			
+		}
 		
-		return eeprom_->Write_LogData( logout_address_, data );
+		return 0;
 	}
 }

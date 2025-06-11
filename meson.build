@@ -51,14 +51,17 @@ thread_dep = dependency('threads')
 
 libjpeg_dep = dependency('libjpeg')
 
+libfdisk_dep = dependency('fdisk')
+
 deps = [ 
-    gst_dep, thread_dep, libjpeg_dep
+    gst_dep, thread_dep, libjpeg_dep,libfdisk_dep
 ]
 
 if host_machine.system() != 'darwin'
     cppfs_dep = meson.get_compiler('cpp').find_library('stdc++fs')
-    deps += cppfs_dep
+    deps += [cppfs_dep, libfdisk_dep]
 endif
+
 
 exe = executable(
     'nvr',

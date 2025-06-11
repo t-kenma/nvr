@@ -95,6 +95,7 @@ namespace nvr
 		
 		Load();
 		
+		/*
 		unsigned char no[8];
 		Read_SNo( &no[0] );
 		Write( ADDR_SERIAL_NUMBER, 8, &no[0] );
@@ -108,6 +109,7 @@ namespace nvr
 		unsigned char size;
 		Read_FSize( &size );
 		Write( ADDR_FILE_SIZE, 1, &size );
+		*/
 	}
 	
 	/*------------------------------------------------------
@@ -157,10 +159,8 @@ namespace nvr
 		{
 			std::lock_guard<std::mutex> lock(mtx_);
 			const char* path = path_.c_str();
-			//const char* path = "/etc/nvr/eeprom2.dat";
 			locked_fp lfp;
 
-//			SPDLOG_INFO(" eeprom::Save() path = {}",path);
 			fp = lfp.open( path );
 			if( fp == nullptr )
 			{

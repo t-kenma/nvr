@@ -29,6 +29,7 @@ class usb_raw_gadget
 		int ep_read(struct usb_raw_ep_io *io);
 		void vbus_draw(uint32_t bMaxPower);
 		void configure();
+		int get_fd() const { return fd; }
 };
 
 #endif

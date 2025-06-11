@@ -32,10 +32,32 @@ namespace nvr
 		static void* bulk_thread( void* arg );
 		void* _bulk_thread();
 		
+		static void bulk_send_thread( void* arg );
+		static void bulk_send_eeprom_thread( void* arg );
+		
 		int th_end = 0;
 		
 		bool connected = false;
 		bool usb_sd_access = false;
+		
+		typedef struct
+		{
+			usb* p_usb;
+			struct io_thread_args* p_thread_args;
+			int ep_handle;
+			char* data;
+			int len;
+		} bulk_send_arg_t;
+	
+		typedef struct
+		{
+			usb* p_usb;
+			struct io_thread_args* p_thread_args;
+			int ep_handle;
+			std::shared_ptr<nvr::eeprom> p_eeprom;
+			int addr;
+			int size;
+		} bulk_send_eeprom_arg_t;
 	
 	private:
 		void debug_dump_data( const char* data, int length );
@@ -84,6 +106,7 @@ namespace nvr
 		pthread_t threadr;
 		
 		char req_buf[512];
+		
 	};
 }
 #endif

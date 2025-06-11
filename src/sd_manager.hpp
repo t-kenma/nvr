@@ -45,10 +45,8 @@ namespace nvr {
         sd_manager(sd_manager &&) = delete;
         ~sd_manager() = default;
 
-        void timer_process();
-        bool check_mount_point();
-        bool is_sd_card();
-        bool is_root_file_exists() noexcept;
+        int is_sd_card();
+        int is_root_file_exists() noexcept;
         int start_format();
         int is_formatting();
         int is_writprotect();
@@ -57,13 +55,20 @@ namespace nvr {
         int unmount_sd();
         int mount_sd();
         int mount_sd_ro();
+        bool is_mmc_file_exists() noexcept;
+        int create_partition();
+        bool end_format();
+        bool sd_card_has_files();
+
+        
         inline bool is_device_file_exists() noexcept        
         {
             std::error_code ec;
             return std::filesystem::exists(device_file_, ec);
         }
+        
+        bool format_en = false;
 
-        // int sync_dir(const std::filesystem::path& path);
     private:
         bool wait_format();
         int start_update();
@@ -73,6 +78,7 @@ namespace nvr {
         bool check_update();
         bool try_read_device();
 		void trigger_rescan();
+		void write_to_sysfs(const char *filename, const char *value);
 		
         inline bool is_update_file_exists() noexcept
         {
@@ -100,12 +106,14 @@ namespace nvr {
         const std::filesystem::path update_file_;
         const std::filesystem::path nvr_file_;
         std::thread thread_;
-        std::atomic<int>  format_result_;
-        std::atomic<int>  update_result_;
+        std::atomic<int> format_result_;
+        std::atomic<int> update_result_;
         std::atomic<int> mount_status_;
         std::shared_ptr<logger> logger_;
-         std::shared_ptr<eeprom> eeprom_;
+        std::shared_ptr<eeprom> eeprom_;
         int counter_;
+        
+        
     };
 }
 

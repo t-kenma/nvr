@@ -29,7 +29,9 @@
 
 #include <math.h>
 
-#define STR_VER		"0.2"
+
+
+#define STR_VER		"0.3"
 
 
 
@@ -225,14 +227,11 @@ namespace nvr
 	/*----------------------------------------------------------
 	----------------------------------------------------------*/
 	int usb::send_bulk( struct io_thread_args* p_thread_args, int ep_handle, char* data, int len )
-	{
-	#if 0
-		printf( "### send_bulk() ep_handle %d ###\n", ep_handle );
-		
+	{		
 		int ret = 0;
 		int send_len = 0;
 		char* p = data;
-		
+				
 		while( len > 0 )
 		{
 			struct usb_raw_ep_io_data io_data;
@@ -248,9 +247,7 @@ namespace nvr
 			
 			memcpy( &io_data.data[0], p, io_data.inner.length );
 			
-			printf( "send_bulk() ep_write() ep_handle=%d len=%d\n", ep_handle, io_data.inner.length );
 			ret = p_thread_args->usb->ep_write( (struct usb_raw_ep_io*)&io_data );
-			printf( "send_bulk() ep_write() ep_handle=%d ret=%d\n", ep_handle, ret );
 			
 			if( ret < 0 )
 			{
@@ -263,73 +260,6 @@ namespace nvr
 		}
 			
 		return send_len;
-	#else
-//		printf( "### send_bulk() ep_handle %d ###\n", ep_handle );
-		
-		int ret = 0;
-		int send_len = 0;
-		
-		signal( SIGCHLD, SIG_IGN );
-		
-		
-		// プロセスを複製し子プロセスを作成
-		pid_t pid = fork();
-//		SPDLOG_INFO( " pid = {}", pid );
-		
-		if( pid < 0 )
-		{
-			// プロセスの複製失敗
-			//
-			SPDLOG_INFO( "Failed to fork process: {}", strerror( errno ) );
-			return -1;
-		} 
-		else
-		if( pid == 0 )
-		{
-			// 子プロセス処理
-			//
-//			SPDLOG_INFO( " child pid = {}", pid );
-			
-			char* p = data;
-			
-			while( len > 0 )
-			{
-				struct usb_raw_ep_io_data io_data;
-				
-				io_data.inner.ep    = ep_handle;
-				io_data.inner.flags = 0;
-				io_data.inner.length = len;
-				
-				if( io_data.inner.length > sizeof( io_data.data ) )
-				{
-				 	io_data.inner.length = sizeof( io_data.data );
-				}
-				
-				memcpy( &io_data.data[0], p, io_data.inner.length );
-				
-//				debug_dump_data( &io_data.data[0], io_data.inner.length );
-				
-//				printf( "send_bulk() ep_write() ep_handle=%d len=%d\n", ep_handle, io_data.inner.length );
-				ret = p_thread_args->usb->ep_write( (struct usb_raw_ep_io*)&io_data );
-//				printf( "send_bulk() ep_write() ep_handle=%d ret=%d\n", ep_handle, ret );
-				
-				if( ret < 0 )
-				{
-					break;
-				}
-				
-				p += ret;
-				len -= ret;
-				send_len += ret;
-			}
-			
-			//子プロセスの終了
-			exit( -1 );
-		}
-		
-		
-		return send_len ;
-	#endif
 	}
 
 	/*----------------------------------------------------------
@@ -346,7 +276,7 @@ namespace nvr
 		int ret = 0;
 		int recv_len = 0;
 		
-//		printf( "### recv_bulk() ep_handle %d ###\n", ep_handle );
+//		printf( "### recv_bulk() ep_handle %d ### in\n", ep_handle );
 		
 		while( len > 0 )
 		{
@@ -369,9 +299,7 @@ namespace nvr
 			{
 				return ret;
 			}
-			
-//			debug_dump_data( &io_data.data[0], io_data.inner.length );
-			
+						
 			memcpy( p, &io_data.data[0], ret );
 			
 			p += ret;
@@ -384,25 +312,35 @@ namespace nvr
 			}
 		}
 		
+//		printf( "### recv_bulk() ep_handle %d ### out\n", ep_handle );
+		
 		return recv_len;
 	}
 	
 	/*----------------------------------------------------------
 	----------------------------------------------------------*/
-	void usb::on_cmd_system_reset( struct io_thread_args* p_thread_args, int rcv_len )
+	void usb::bulk_send_thread( void* arg )
 	{
-		int len = 0;
-		char sts[5];
-		sts[0] = 4;						// 4:OK
-		memcpy( &sts[1], &len, 4 );		// 応答データ長
+//		printf( "### bulk_send_thread() ### in\n" );
 		
-		// ステータス応答
-		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
+		nvr::usb::bulk_send_arg_t* p_bulk_send_arg = (nvr::usb::bulk_send_arg_t*)arg;
 		
 		
-		waitpid( -1, NULL, 0 );
+		p_bulk_send_arg->p_usb->send_bulk( p_bulk_send_arg->p_thread_args, 
+										 p_bulk_send_arg->ep_handle, 
+										 p_bulk_send_arg->data, 
+										 p_bulk_send_arg->len );
+										 
+										 
 		
-		
+//		printf( "### bulk_send_thread() ### out\n" );
+	}
+	
+	
+	/*----------------------------------------------------------
+	----------------------------------------------------------*/
+	void usb::on_cmd_system_reset( struct io_thread_args* p_thread_args, int rcv_len )
+	{		
 		// 300ms wait
 		std::this_thread::sleep_for( std::chrono::milliseconds( 300 ) );
 		
@@ -414,17 +352,14 @@ namespace nvr
 	----------------------------------------------------------*/
 	void usb::on_cmd_load_info( struct io_thread_args* p_thread_args, int rcv_len )
 	{
-//		printf( "on_cmd_load_info()\n" );
 		
 		recv_bulk( p_thread_args, p_thread_args->handle_out2, req_buf, rcv_len );
 		
-		int file_no;
-		memcpy( &file_no, &req_buf[0], 4 );
+		int file_no = req_buf[3]<<24 |req_buf[2]<<16 |req_buf[1]<<8 | req_buf[0];
+
 		
 		char path[2048];
 		sprintf( path, "/mnt/sd/EVC/REC_INF%d.dat", file_no ); 
-
-//		printf( "path=%s\n", path );
 		
 		int len = 0;
 		char ret = 4;			// 4:OK, 3:NG
@@ -440,18 +375,10 @@ namespace nvr
 			long long int size = ifs.tellg();
 			ifs.seekg( 0 );
 			
-//			printf( "size=%lld\n", size );
-
 			dat = new char[size];
 			ifs.read( dat, size );
-			
+						
 			len = (size < 64) ? size : 64;
-				
-//			for( int i=0; i<len; i++ )
-//			{
-//				printf( "%02x ", dat[i] );
-//			}
-//			printf("\n");
 			
 			len = size;
 		}
@@ -461,25 +388,46 @@ namespace nvr
 		}
 		
 		char* res = dat;
-		
 		// 送信準備
+		std::thread send_th;
 		if( len > 0 )
 		{
-			send_bulk( p_thread_args, p_thread_args->handle_in2, res, len );
+			
+			bulk_send_arg_t bulk_send_arg;
+			bulk_send_arg.p_usb = this;
+			bulk_send_arg.p_thread_args = p_thread_args;
+			bulk_send_arg.ep_handle = p_thread_args->handle_in2;
+			bulk_send_arg.data = res;
+			bulk_send_arg.len = len;
+			
+			send_th = std::thread( bulk_send_thread, &bulk_send_arg );
 		}
 		
-		delete dat;
+		
 		
 		
 		char sts[5];
 		sts[0] = ret;					// ret
 		memcpy( &sts[1], &len, 4 );		// 応答データ長
 		
-//		printf( "res = %02X %02X %02X %02X %02X \n", 
-//				sts[0], sts[1], sts[2], sts[3], sts[4] );
+		/*
+		printf( "res = %02X %02X %02X %02X %02X \n", 
+				sts[0], sts[1], sts[2], sts[3], sts[4] );
+		
+		*/
 		
 		// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
+		
+		if( len > 0 )
+		{
+			if( send_th.joinable() )
+			{
+				send_th.join();
+			}
+		}
+		
+		delete dat;
 	}
 	
 	/*----------------------------------------------------------
@@ -502,32 +450,18 @@ namespace nvr
 			ifs.seekg( 0, std::ios::end );
 			size = ifs.tellg();
 			ifs.seekg( 0 );
-
-			usb_sd_access = true;
 			
 			dat = new char[size];
 			ifs.read( dat, size );
 			
-			usb_sd_access = true;
 		}
 		catch( const std::exception& e )
 		{
 			return -1;
 		}
-		
-		int count = 0;
-		
-		for( int i = 0; i < size; i++ )
-		{
-			char c = dat[i];
-			
-			if( (c >= '0') && (c <= '9') )
-			{
-				count << 8;
-				count |= (c - 0x30);
-			}
-		}
-		
+				
+		int count = atoi(dat);
+				
 		delete dat;
 		 
 		return count;
@@ -545,22 +479,25 @@ namespace nvr
 		}
 		
 		if( count > 999999 )
-		{
-			int dir1 = file_no / 1000000;
-			int dir2 = file_no / 10000;
-			int dir3 = file_no / 100;
+		{				
+			int dir1 = (file_no / 1000000) % 100; 
+			int dir2 = (file_no / 10000  ) % 100; 
+			int dir3 = (file_no / 100    ) % 100; 
 			
-			sprintf( path, "/mnt/sd/EVC/DIR1_%02d/DIR2_%02d/DIR3_%02d/JP%06d.DAT", 
+			sprintf( path, "/mnt/sd/EVC/DIR1_%02d/DIR2_%02d/DIR3_%02d/JP%08d.DAT", 
 					 dir1, dir2, dir3, file_no ); 
 		}
 		else
 		{
-			int dir1 = file_no / 10000;
-			int dir2 = file_no / 100;
+			int dir1 = (file_no / 10000) % 100;    
+			int dir2 = (file_no / 100  ) % 100;   
 			
 			sprintf( path, "/mnt/sd/EVC/DIR1_%02d/DIR2_%02d/JP%06d.DAT", 
 					 dir1, dir2, file_no ); 
 		}
+		
+		SPDLOG_INFO("count = {}",count);
+		SPDLOG_INFO("get_rec_data_path = {}",path);
 		
 		return strlen( path );
 	}
@@ -571,16 +508,18 @@ namespace nvr
 	{
 		recv_bulk( p_thread_args, p_thread_args->handle_out2, req_buf, rcv_len );
 		
-		int file_no;
-		memcpy( &file_no, &req_buf[0], 4 );
+		int file_no = req_buf[3]<<24 |req_buf[2]<<16 |req_buf[1]<<8 | req_buf[0];
+
 		
 		char ret = 4;			// 4:OK, 3:NG
 		int len = 0;
 		
 		char path[2048];
+		std::thread send_th;
+		char *dat = NULL;
+		
 		if( get_rec_data_path( file_no, path ) > 0 )
 		{
-			char *dat = NULL;
 			try
 			{
 				usb_sd_access = true;
@@ -597,7 +536,6 @@ namespace nvr
 				
 				len = size;
 				
-				usb_sd_access = true;
 			}
 			catch( const std::exception& e )
 			{
@@ -605,17 +543,19 @@ namespace nvr
 			}
 			
 			char* res = dat;
-		
-			usb_sd_access = true;
-			
+					
 			// 送信準備
 			if( len > 0 )
 			{
-				send_bulk( p_thread_args, p_thread_args->handle_in2, res, len );
-			}
-			
-			usb_sd_access = true;
-			delete dat;
+				bulk_send_arg_t bulk_send_arg;
+				bulk_send_arg.p_usb = this;
+				bulk_send_arg.p_thread_args = p_thread_args;
+				bulk_send_arg.ep_handle = p_thread_args->handle_in2;
+				bulk_send_arg.data = res;
+				bulk_send_arg.len = len;
+				
+				send_th = std::thread( bulk_send_thread, &bulk_send_arg );
+			}			
 		}
 		else
 		{
@@ -623,12 +563,21 @@ namespace nvr
 		}
 		
 		
+		// ステータス応答
 		char sts[5];
 		sts[0] = ret;					// 4:OK, 3:NG
 		memcpy( &sts[1], &len, 4 );		// 応答データ長
 		
-		// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
+		
+		if( len > 0 )
+		{
+			if( send_th.joinable() )
+			{
+				send_th.join();
+			}
+		}
+		delete dat;
 	}
 	
 	/*----------------------------------------------------------
@@ -637,17 +586,17 @@ namespace nvr
 	{
 		recv_bulk( p_thread_args, p_thread_args->handle_out2, req_buf, rcv_len );
 		
-		int file_no;
-		memcpy( &file_no, &req_buf[0], 4 );
+		int file_no = req_buf[3]<<24 |req_buf[2]<<16 |req_buf[1]<<8 | req_buf[0];
 		
 		char ret = 4;			// 4:OK, 3:NG
 		int len = 0;
 		
 		char path[2048];
 		long long int size;
+		std::thread send_th;
+		char *dat = NULL;
 		if( get_rec_data_path( file_no, path ) > 0 )
 		{
-			char *dat = NULL;
 			try
 			{
 				usb_sd_access = true;
@@ -660,16 +609,12 @@ namespace nvr
 				ifs.seekg( 0 );
 
 				dat = new char[size];
-				ifs.read( dat, size );
-				
-				usb_sd_access = true;
+				ifs.read( dat, size );				
 			}
 			catch( const std::exception& e )
 			{
 				ret = 3;		// 3:NG
 			}
-			
-			usb_sd_access = true;
 			
 			if( size > 380 )
 			{
@@ -678,13 +623,15 @@ namespace nvr
 				
 				memcpy( res, &dat[287], 19 );
 				
-				delete dat;
-				
 				// 送信準備
-				send_bulk( p_thread_args, p_thread_args->handle_in2, res, len );
-				
-				usb_sd_access = true;
-				
+				bulk_send_arg_t bulk_send_arg;
+				bulk_send_arg.p_usb = this;
+				bulk_send_arg.p_thread_args = p_thread_args;
+				bulk_send_arg.ep_handle = p_thread_args->handle_in2;
+				bulk_send_arg.data = res;
+				bulk_send_arg.len = len;
+		
+				send_th = std::thread( bulk_send_thread, &bulk_send_arg );				
 			}
 		}
 		else
@@ -693,12 +640,22 @@ namespace nvr
 		}
 		
 		
+		// ステータス応答
 		char sts[5];
 		sts[0] = ret;					// 4:OK, 3:NG
 		memcpy( &sts[1], &len, 4 );		// 応答データ長
 		
-		// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
+		
+		
+		if( len > 0 )
+		{
+			if( send_th.joinable() )
+			{
+				send_th.join();
+			}
+		}
+		delete dat;
 	}
 	
 	/*----------------------------------------------------------
@@ -707,17 +664,17 @@ namespace nvr
 	{
 		recv_bulk( p_thread_args, p_thread_args->handle_out2, req_buf, rcv_len );
 		
-		int file_no;
-		memcpy( &file_no, &req_buf[0], 4 );
+		int file_no = req_buf[3]<<24 |req_buf[2]<<16 |req_buf[1]<<8 | req_buf[0];
 		
 		char ret = 4;			// 4:OK, 3:NG
 		int len = 0;
 		
 		char path[2048];
 		long long int size;
+		std::thread send_th;
+		char *dat = NULL;
 		if( get_rec_data_path( file_no, path ) > 0 )
 		{
-			char *dat = NULL;
 			try
 			{
 				usb_sd_access = true;
@@ -732,15 +689,12 @@ namespace nvr
 				dat = new char[size];
 				ifs.read( dat, size );
 				
-				usb_sd_access = true;
 			}
 			catch( const std::exception& e )
 			{
 				ret = 3;		// 3:NG
 			}
-			
-			usb_sd_access = true;
-			
+						
 			if( size > 380 )
 			{
 				// JPEG file rec interval(338B~4B)からリード
@@ -750,12 +704,16 @@ namespace nvr
 				// exif[338]~[341] ("0000" 100ms ASCII)
 				memcpy( res, &dat[338], 4 );
 				
-				delete dat;
 				
 				// 送信準備
-				send_bulk( p_thread_args, p_thread_args->handle_in2, res, len );
+				bulk_send_arg_t bulk_send_arg;
+				bulk_send_arg.p_usb = this;
+				bulk_send_arg.p_thread_args = p_thread_args;
+				bulk_send_arg.ep_handle = p_thread_args->handle_in2;
+				bulk_send_arg.data = res;
+				bulk_send_arg.len = len;
 				
-				usb_sd_access = true;
+				send_th = std::thread( bulk_send_thread, &bulk_send_arg );
 			}
 		}
 		else
@@ -764,12 +722,22 @@ namespace nvr
 		}
 		
 		
+		// ステータス応答
 		char sts[5];
 		sts[0] = ret;					// 4:OK, 3:NG
 		memcpy( &sts[1], &len, 4 );		// 応答データ長
 		
-		// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
+		
+		if( len > 0 )
+		{
+			if( send_th.joinable() )
+			{
+				send_th.join();
+			}
+		}
+		
+		delete dat;
 	}
 	
 	/*----------------------------------------------------------
@@ -778,8 +746,7 @@ namespace nvr
 	{
 		recv_bulk( p_thread_args, p_thread_args->handle_out2, req_buf, rcv_len );
 		
-		int dir1;
-		memcpy( &dir1, &req_buf[0], 2 );
+		int dir1 = req_buf[1]<<8 | req_buf[0];
 		
 		usb_sd_access = true;
 		
@@ -791,8 +758,6 @@ namespace nvr
 		sprintf( path, "/mnt/sd/EVC/DIR1_%02d/", dir1 ); 
 		fs::path fs_path( path );
 		std::error_code ec;
-
-		usb_sd_access = true;
 		
 		// ディレクトリの存在確認
 		if( fs::exists( fs_path, ec ) )
@@ -803,14 +768,12 @@ namespace nvr
 		{
 			ret = 3;	// 3:NG
 		}
-		
-		usb_sd_access = true;
-		
+				
+		// ステータス応答
 		char sts[5];
 		sts[0] = ret;					// ret
 		memcpy( &sts[1], &len, 4 );		// 応答データ長
 		
-		// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
 	}
 	
@@ -822,16 +785,9 @@ namespace nvr
 		
 		usb_sd_access = true;
 		
-		int dir1;
-		memcpy( &dir1, &req_buf[0], 2 );
-		
-		usb_sd_access = true;
-		
-		int dir2;
-		memcpy( &dir2, &req_buf[2], 2 );
-		
-		usb_sd_access = true;
-		
+		int dir1 = req_buf[1]<<8 | req_buf[0];
+		int dir2 = req_buf[3]<<8 | req_buf[2];
+				
 		// exist dir1 & dir2
 		int len = 0;
 		char ret;
@@ -840,8 +796,6 @@ namespace nvr
 		sprintf( path, "/mnt/sd/EVC/DIR1_%02d/DIR2_%02d/", dir1, dir2 ); 
 		fs::path fs_path( path );
 		std::error_code ec;
-
-		usb_sd_access = true;
 		
 		// ディレクトリの存在確認
 		if( fs::exists( fs_path, ec ) )
@@ -851,15 +805,13 @@ namespace nvr
 		else
 		{
 			ret = 3;	// 3:NG
-		}
+		}		
 		
+		// ステータス応答
 		char sts[5];
 		sts[0] = ret;					// ret
 		memcpy( &sts[1], &len, 4 );		// 応答データ長
 		
-		usb_sd_access = true;
-		
-		// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
 	}
 	
@@ -871,20 +823,9 @@ namespace nvr
 		
 		usb_sd_access = true;
 		
-		int dir1;
-		memcpy( &dir1, &req_buf[0], 2 );
-		
-		usb_sd_access = true;
-		
-		int dir2;
-		memcpy( &dir2, &req_buf[2], 2 );
-		
-		usb_sd_access = true;
-		
-		int dir3;
-		memcpy( &dir3, &req_buf[4], 2 );
-		
-		usb_sd_access = true;
+		int dir1 = req_buf[1]<<8 | req_buf[0];
+		int dir2 = req_buf[3]<<8 | req_buf[2];
+		int dir3 = req_buf[5]<<8 | req_buf[4];
 		
 		// exist dir1 & dir2 & dir3
 		int len = 0;
@@ -894,8 +835,6 @@ namespace nvr
 		sprintf( path, "/mnt/sd/EVC/DIR1_%02d/DIR2_%02d/DIR3_%02d/", dir1, dir2, dir3 ); 
 		fs::path fs_path( path );
 		std::error_code ec;
-
-		usb_sd_access = true;
 		
 		// ディレクトリの存在確認
 		if( fs::exists( fs_path, ec ) )
@@ -906,13 +845,12 @@ namespace nvr
 		{
 			ret = 3;	// 3:NG
 		}
-		
+				
+		// ステータス応答
 		char sts[5];
 		sts[0] = ret;					// ret
 		memcpy( &sts[1], &len, 4 );		// 応答データ長
-		usb_sd_access = true;
 		
-		// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
 	}
 	
@@ -924,7 +862,7 @@ namespace nvr
 		
 		// BCD
 		int YY = req_buf[0];
-		int MM = req_buf[1];
+		int MM = req_buf[1]; 
 		int DD = req_buf[2];
 		int hh = req_buf[3];
 		int mm = req_buf[4];
@@ -970,9 +908,6 @@ namespace nvr
 //			printf( "system( \"hwclock --systohc\" ) rt=%d \n", rt );
 			if( rt >= 0 )
 			{
-			
-				
-				
 				//---調時（新時刻） ログ
 				//
 				logger_->LogOut( 6 );
@@ -997,11 +932,12 @@ namespace nvr
 			ret = 3;	// 3:NG
 		}
 		
+		
+		// ステータス応答
 		char sts[5];
 		sts[0] = ret;					// ret
 		memcpy( &sts[1], &len, 4 );		// 応答データ長
 		
-		// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
 	}
 	
@@ -1030,15 +966,28 @@ namespace nvr
 		
 
 		// 日時の送信準備
-		send_bulk( p_thread_args, p_thread_args->handle_in2, res, len );
+		bulk_send_arg_t bulk_send_arg;
+		bulk_send_arg.p_usb = this;
+		bulk_send_arg.p_thread_args = p_thread_args;
+		bulk_send_arg.ep_handle = p_thread_args->handle_in2;
+		bulk_send_arg.data = res;
+		bulk_send_arg.len = len;
+		
+		std::thread send_th = std::thread( bulk_send_thread, &bulk_send_arg );
 		
 		
+		// ステータス応答
 		char sts[5];
 		sts[0] = 4;						// 4:OK
 		memcpy( &sts[1], &len, 4 );		// 応答データ長
 		
-		// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
+		
+		
+		if( send_th.joinable() )
+		{
+			send_th.join();
+		}
 	}
 	
 	/*----------------------------------------------------------
@@ -1062,13 +1011,6 @@ namespace nvr
 		
 		if( rcv_len > 0 )
 		{
-//			printf( "dat = " );
-//			for( int i=0; i<rcv_len; i++ )
-//			{
-//				printf( "%02X ", dat[i] );
-//			}
-//			printf( "\n" );
-			
 			ret_eep = eeprom_->Write( addr, rcv_len, (unsigned char*)dat );
 			
 			addr += rcv_len;
@@ -1093,13 +1035,6 @@ namespace nvr
 			
 			dat = req_buf;
 			
-//			printf( "dat = " );
-//			for( int i=0; i<rcved; i++ )
-//			{
-//				printf( "%02X ", dat[i] );
-//			}
-//			printf( "\n" );
-			
 			if( ret_eep == 0 )
 			{
 				ret_eep = eeprom_->Write( addr, rcved, (unsigned char*)dat );
@@ -1120,34 +1055,24 @@ namespace nvr
 			ret = 3;
 		}
 		
+		
+		// ステータス応答
 		int len = 0;
 		char sts[5];
 		sts[0] = ret;					// 4:OK
 		memcpy( &sts[1], &len, 4 );		// 応答データ長
-		
-//		printf( "res = %02X %02X %02X %02X %02X \n", 
-//			sts[0], sts[1], sts[2], sts[3], sts[4] );
 	
-	// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
 	}
 	
 	/*----------------------------------------------------------
 	----------------------------------------------------------*/
-	void usb::on_cmd_get_eeprom( struct io_thread_args* p_thread_args, int rcv_len, unsigned short* last_addr )
-	{
-		recv_bulk( p_thread_args, p_thread_args->handle_out2, req_buf, rcv_len );
+	void usb::bulk_send_eeprom_thread( void* arg )
+	{		
+		nvr::usb::bulk_send_eeprom_arg_t* p_bulk_send_arg = (nvr::usb::bulk_send_eeprom_arg_t*)arg;
 		
-		int addr = ((int)req_buf[1] << 8) | req_buf[0];
-		int size = ((int)req_buf[3] << 8) | req_buf[2];
-		
-		*last_addr = addr;
-		
-//		printf( "get_eeprom() addr=0x%x size=%d \n", addr, size );
-		
-	#if 0
-		
-		printf( "### send_bulk() ep_handle %d ###\n", p_thread_args->handle_in2 );
+		int addr = p_bulk_send_arg->addr;
+		int size = p_bulk_send_arg->size;
 		
 		int send_len = 0;
 		int ret_eep = 0;
@@ -1165,19 +1090,11 @@ namespace nvr
 			struct usb_raw_ep_io_data io_data;
 			
 			// EEPROMからリード
-			ret_eep = eeprom_->Read( addr, rd_len, (unsigned char*)io_data.data );
-			
-			printf( "res = " );
-			for( int i=0; i<rd_len; i++ )
-			{
-				printf( "%02X ", io_data.data[i] );
-			}
-			printf( "\n" );
-			
-			
+			ret_eep = p_bulk_send_arg->p_eeprom->Read( addr, rd_len, (unsigned char*)io_data.data );
+						
 			// eepromの内容の送信準備
 			
-			io_data.inner.ep    = p_thread_args->handle_in2;
+			io_data.inner.ep    = p_bulk_send_arg->p_thread_args->handle_in2;
 			io_data.inner.flags = 0;
 			io_data.inner.length = rd_len;
 			
@@ -1185,12 +1102,8 @@ namespace nvr
 			{
 				io_data.inner.length = sizeof( io_data.data );
 			}
-			
-			//memcpy( &io_data.data[0], res_buf, io_data.inner.length );
-			
-			printf( "send_bulk() ep_write() ep_handle=%d len=%d\n", p_thread_args->handle_in2, io_data.inner.length );
-			int snded = p_thread_args->usb->ep_write( (struct usb_raw_ep_io*)&io_data );
-			printf( "send_bulk() ep_write() ep_handle=%d ret=%d\n", p_thread_args->handle_in2, snded );
+						
+			int snded = p_bulk_send_arg->p_thread_args->usb->ep_write( (struct usb_raw_ep_io*)&io_data );
 			
 			if( snded < 0 )
 			{
@@ -1201,131 +1114,45 @@ namespace nvr
 			addr += snded;
 			size -= snded;
 		}
+	}
+	/*----------------------------------------------------------
+	----------------------------------------------------------*/
+	void usb::on_cmd_get_eeprom( struct io_thread_args* p_thread_args, int rcv_len, unsigned short* last_addr )
+	{
+		recv_bulk( p_thread_args, p_thread_args->handle_out2, req_buf, rcv_len );
 		
-		char ret;
-		if( ret_eep >= 0 )
-		{
-			ret = 4;
-		}
-		else
-		{
-			ret = 3;
-		}
+		int addr = ((int)req_buf[1] << 8) | req_buf[0];
+		int size = ((int)req_buf[3] << 8) | req_buf[2];
 		
-		char sts[5];
-		sts[0] = ret;					// 4:OK
-		memcpy( &sts[1], &len, 4 );		// 応答データ長
+		*last_addr = addr;
+		 		
+		bulk_send_eeprom_arg_t bulk_send_eeprom_arg;
+		bulk_send_eeprom_arg.p_usb = this;
+		bulk_send_eeprom_arg.p_thread_args = p_thread_args;
+		bulk_send_eeprom_arg.ep_handle = p_thread_args->handle_in2;
+		bulk_send_eeprom_arg.p_eeprom = eeprom_;
+		bulk_send_eeprom_arg.addr = addr;
+		bulk_send_eeprom_arg.size = size;
 		
-		printf( "res = %02X %02X %02X %02X %02X \n", 
-				sts[0], sts[1], sts[2], sts[3], sts[4] );
+		std::thread send_th = std::thread( bulk_send_eeprom_thread, &bulk_send_eeprom_arg );
 		
-		// ステータス応答
-		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
-		
-	#else
-//		printf( "### send_bulk() ep_handle %d ###\n", p_thread_args->handle_in2 );
-		
-		int send_len = 0;
-		int ret_eep = 0;
-		int len = size;
-		
-		signal( SIGCHLD, SIG_IGN );
-		
-		// プロセスを複製し子プロセスを作成
-		pid_t pid = fork();
-//		SPDLOG_INFO( " pid = {}", pid );
-		
-		if( pid < 0 )
-		{
-			// プロセスの複製失敗
-			//
-			SPDLOG_INFO( "Failed to fork process: {}", strerror( errno ) );
-			return;
-		} 
-		else
-		if( pid == 0 )
-		{
-			// 子プロセス処理
-			//
-//			SPDLOG_INFO( " child pid = {}", pid );
-			
-			int rd_len;
-			while( size > 0 )
-			{
-				rd_len = size;
-				if( rd_len > USB_MAX_PACKET_SIZE )
-				{
-					rd_len = USB_MAX_PACKET_SIZE;
-				}
-				
-				struct usb_raw_ep_io_data io_data;
-				
-				// EEPROMからリード
-				ret_eep = eeprom_->Read( addr, rd_len, (unsigned char*)io_data.data );
-				
-//				printf( "res = " );
-//				for( int i=0; i<rd_len; i++ )
-//				{
-//					printf( "%02X ", io_data.data[i] );
-//				}
-//				printf( "\n" );
-				
-				
-				// eepromの内容の送信準備
-				
-				io_data.inner.ep    = p_thread_args->handle_in2;
-				io_data.inner.flags = 0;
-				io_data.inner.length = rd_len;
-				
-				if( io_data.inner.length > sizeof( io_data.data ) )
-				{
-				 	io_data.inner.length = sizeof( io_data.data );
-				}
-				
-				//memcpy( &io_data.data[0], res_buf, io_data.inner.length );
-				
-				debug_dump_data( io_data.data, io_data.inner.length );
-				
-				printf( "send_bulk() ep_write() ep_handle=%d len=%d\n", p_thread_args->handle_in2, io_data.inner.length );
-				int snded = p_thread_args->usb->ep_write( (struct usb_raw_ep_io*)&io_data );
-				printf( "send_bulk() ep_write() ep_handle=%d ret=%d\n", p_thread_args->handle_in2, snded );
-				
-				if( snded < 0 )
-				{
-					break;
-				}
-				
-				send_len += snded;
-				addr += snded;
-				size -= snded;
-			}
-			
-			//子プロセスの終了
-			exit( -1 );
-		}
 		
 		usleep( 5000 );
 		
-		char ret;
-		if( ret_eep >= 0 )
-		{
-			ret = 4;
-		}
-		else
-		{
-			ret = 3;
-		}
-		
-		char sts[5];
-		sts[0] = ret;					// 4:OK
-		memcpy( &sts[1], &len, 4 );		// 応答データ長
-		
-//		printf( "res = %02X %02X %02X %02X %02X \n", 
-//				sts[0], sts[1], sts[2], sts[3], sts[4] );
 		
 		// ステータス応答
+		int len = size;
+		char sts[5];
+		sts[0] = 4;					// 4:OK
+		memcpy( &sts[1], &len, 4 );		// 応答データ長
+				
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
-	#endif
+		
+		
+		if( send_th.joinable() )
+		{
+			send_th.join();
+		}
 	}
 
 	/*----------------------------------------------------------
@@ -1341,15 +1168,28 @@ namespace nvr
 		memcpy( res, STR_VER, 3 );
 		
 		// 日時の送信準備
-		send_bulk( p_thread_args, p_thread_args->handle_in2, res, len );
+		bulk_send_arg_t bulk_send_arg;
+		bulk_send_arg.p_usb = this;
+		bulk_send_arg.p_thread_args = p_thread_args;
+		bulk_send_arg.ep_handle = p_thread_args->handle_in2;
+		bulk_send_arg.data = res;
+		bulk_send_arg.len = len;
+		
+		std::thread send_th = std::thread( bulk_send_thread, &bulk_send_arg );
 		
 		
+		// ステータス応答
 		char sts[5];
 		sts[0] = 4;						// 4:OK
 		memcpy( &sts[1], &len, 4 );		// 応答データ長
 		
-		// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
+		
+		
+		if( send_th.joinable() )
+		{
+			send_th.join();
+		}
 	}
 	
 	/*----------------------------------------------------------
@@ -1360,12 +1200,13 @@ namespace nvr
 		
 		char* dat = &req_buf[4];
 		
+		
+		// ステータス応答
 		int len = 0;
 		char sts[5];
 		sts[0] = 3;						// 3:NG
 		memcpy( &sts[1], &len, 4 );		// 応答データ長
 		
-		// ステータス応答
 		send_bulk( p_thread_args, p_thread_args->handle_in1, sts, 5 );
 	}
 	
@@ -1415,9 +1256,7 @@ namespace nvr
 	/*----------------------------------------------------------
 	----------------------------------------------------------*/
 	void* usb::_bulk_thread()
-	{
-		printf( "\n\n\n\n\n***  bulk_thread() start**\n" );
-		
+	{		
 		connected = true;
 		
 		
@@ -1436,14 +1275,13 @@ namespace nvr
 		
 		while( 1 )
 		{
-//			printf( "  call recv_bulk() start\n" );
 			ret = recv_bulk_ex( p_thread_args, p_thread_args->handle_out1, (char*)buf, 128, true );
-//			printf( "  call recv_bulk() end ret=%d\n", ret );
 			
 			if( ret < 0 )
 			{
 				break;
 			}
+			
 			
 			unsigned char* p = buf;
 			
@@ -1486,7 +1324,6 @@ namespace nvr
 			}
 		}
 		
-		printf( "\n***  bulk_thread() end ***\n" );
 		connected = false;
 		
 		
@@ -1578,7 +1415,7 @@ namespace nvr
 			}
 			
 			
-			printf( "descriptor_type=%d\n ", descriptor_type );
+//			printf( "descriptor_type=%d\n ", descriptor_type );
 		}
 		
 		if( e->is_event(USB_TYPE_STANDARD, USB_REQ_SET_CONFIGURATION) )
@@ -1594,16 +1431,16 @@ namespace nvr
 				thread_args.handle_in1 = -1;
 			}
 			{
-				printf( "\n\n\n\n*** call usb->ep_enable() in1 ***\n\n\n\n" );
+//				printf( "\n\n\n\n*** call usb->ep_enable() in1 ***\n\n\n\n" );
 				int ep_num_bulk_in1 = usb->ep_enable( reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_in) );
 				if( ep_num_bulk_in1 >= 0 )
 				{
-					printf( "\n\n\n\n*** enable ep_num_bulk_in1 ***\n\n\n\n" );
+//					printf( "\n\n\n\n*** enable ep_num_bulk_in1 ***\n\n\n\n" );
 					thread_args.handle_in1 = ep_num_bulk_in1;
 				}
 				else
 				{
-					printf( "\n\n\n\n***   failed usb->ep_enable() in1  ret=%d  errno=%d ***\n\n\n\n", ep_num_bulk_in1, errno );
+//					printf( "\n\n\n\n***   failed usb->ep_enable() in1  ret=%d  errno=%d ***\n\n\n\n", ep_num_bulk_in1, errno );
 				}
 			}
 			
@@ -1613,16 +1450,16 @@ namespace nvr
 				thread_args.handle_out1 = -1;
 			}
 			{
-				printf( "\n\n\n\n*** call usb->ep_enable() out1 ***\n\n\n\n" );
+//				printf( "\n\n\n\n*** call usb->ep_enable() out1 ***\n\n\n\n" );
 				int ep_num_bulk_out1 = usb->ep_enable( reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_out) );
 				if( ep_num_bulk_out1 >= 0 )
 				{
-					printf( "\n\n\n\n*** enable ep_num_bulk_out1 ***\n\n\n\n" );
+//					printf( "\n\n\n\n*** enable ep_num_bulk_out1 ***\n\n\n\n" );
 					thread_args.handle_out1 = ep_num_bulk_out1;
 				}
 				else
 				{
-					printf( "\n\n\n\n***   failed usb->ep_enable() out1  vret=%d  errno=%d ***\n\n\n\n", ep_num_bulk_out1, errno );
+//					printf( "\n\n\n\n***   failed usb->ep_enable() out1  vret=%d  errno=%d ***\n\n\n\n", ep_num_bulk_out1, errno );
 				}
 			}
 				
@@ -1632,16 +1469,16 @@ namespace nvr
 				thread_args.handle_in2 = -1;
 			}
 			{
-				printf( "\n\n\n\n*** call usb->ep_enable() in2 ***\n\n\n\n" );
+//				printf( "\n\n\n\n*** call usb->ep_enable() in2 ***\n\n\n\n" );
 				int ep_num_bulk_in2 = usb->ep_enable( reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_in2) );
 				if( ep_num_bulk_in2 >= 0 )
 				{
-					printf( "\n\n\n\n*** enable ep_num_bulk_in2 ***\n\n\n\n" );
+//					printf( "\n\n\n\n*** enable ep_num_bulk_in2 ***\n\n\n\n" );
 					thread_args.handle_in2 = ep_num_bulk_in2;
 				}
 				else
 				{
-					printf( "\n\n\n\n***   failed usb->ep_enable() in2  ret=%d  errno=%d ***\n\n\n\n", ep_num_bulk_in2, errno );
+//					printf( "\n\n\n\n***   failed usb->ep_enable() in2  ret=%d  errno=%d ***\n\n\n\n", ep_num_bulk_in2, errno );
 				}
 			}
 			
@@ -1651,16 +1488,16 @@ namespace nvr
 				thread_args.handle_out2 = -1;
 			}
 			{
-				printf( "\n\n\n\n*** call usb->ep_enable() out2 ***\n\n\n\n" );
+//				printf( "\n\n\n\n*** call usb->ep_enable() out2 ***\n\n\n\n" );
 				int ep_num_bulk_out2 = usb->ep_enable( reinterpret_cast<struct usb_endpoint_descriptor *>(&me56ps2_config_descriptors.endpoint_bulk_out2) );
 				if( ep_num_bulk_out2 >= 0 )
 				{
-					printf( "\n\n\n\n*** enable ep_num_bulk_out2 ***\n\n\n\n" );
+//					printf( "\n\n\n\n*** enable ep_num_bulk_out2 ***\n\n\n\n" );
 					thread_args.handle_out2 = ep_num_bulk_out2;
 				}
 				else
 				{
-					printf( "\n\n\n\n***   failed usb->ep_enable() out2  ret=%d  errno=%d ***\n\n\n\n", ep_num_bulk_out2, errno );
+//					printf( "\n\n\n\n***   failed usb->ep_enable() out2  ret=%d  errno=%d ***\n\n\n\n", ep_num_bulk_out2, errno );
 				}
 			}
 			
@@ -1708,8 +1545,24 @@ namespace nvr
 
 	/*----------------------------------------------------------
 	----------------------------------------------------------*/
+	/*----------------------------------------------------------
+	guint signal_user2_id;
+
+	static gboolean signal_user2_cb(gpointer udata)
+	{
+		SPDLOG_INFO("USB:SIGUSER2 receiverd.");
+		guint* data = static_cast<guint*>(udata);
+		
+	///	nvr::do_systemctl("restart", "systemd-networkd");
+		
+		return G_SOURCE_CONTINUE;
+	}
+	----------------------------------------------------------*/
+	
 	bool usb::event_usb_control_loop()
 	{
+///		signal_user2_id = g_unix_signal_add( SIGUSR2, G_SOURCE_FUNC(signal_user2_cb), &signal_user2_id );
+		
 		SPDLOG_INFO("while Start");
 		while( !th_end )
 		{
@@ -1721,9 +1574,11 @@ namespace nvr
 			pkt.header.ep = 0;
 			pkt.header.flags = 0;
 			pkt.header.length = 0;
-
+			
+			SPDLOG_INFO("event_fetch() in");
 			g_usb->event_fetch(&e.event);
-		 
+			SPDLOG_INFO("event_fetch() out");
+			
 			switch(e.event.type) {
 				case USB_RAW_EVENT_CONNECT:
 				    break;
@@ -1744,11 +1599,18 @@ namespace nvr
 				    break;
 			}
 		}
+		
 		SPDLOG_INFO("while end");
+		
+		th_end = 2;
 
+//		if( signal_user2_id )
+//		{
+//			g_source_remove( signal_user2_id );
+//		}
+		
 		return true;
 	}
-
-
 }
+
 
