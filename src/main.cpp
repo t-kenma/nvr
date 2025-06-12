@@ -2421,7 +2421,12 @@ int main(int argc, char **argv)
 END:
 	//---終了処理
 	//
-	SPDLOG_INFO("END process start");
+	led->set_r( led->off );
+	led->set_g( led->off );
+	led->set_y( led->off );
+	led->update_led();
+	
+	SPDLOG_INFO("ENDprocess start");
 	data.interrupted.store(true, std::memory_order_relaxed);
 	usb_end();
 	
@@ -2454,8 +2459,9 @@ END:
 	}
 	
 	
-	SPDLOG_INFO("END process END");
-	
+	SPDLOG_INFO("ENDprocess END");
+	//data->led->set_y( data->led->on );
+	sleep(3);
 	
 	std::exit(0);
 }
