@@ -1227,7 +1227,9 @@ static gboolean on_timer( gpointer udata )
 		count_btn_down = 0;
 		count_copy_interval = 0;
 		
-		is_sd_check = false;
+		is_sd_check = true;
+		//is_sd_check = false;
+
 		
 		//--- SDカードチェック
 		//

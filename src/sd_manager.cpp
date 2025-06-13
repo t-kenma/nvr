@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <sys/resource.h> 
 #include <spawn.h>      // posix_spawn
+#include <sys/vfs.h> 
 
 namespace nvr {
     const char *MKFS_PATH = "/sbin/mkfs.vfat";
@@ -217,13 +218,35 @@ namespace nvr {
 ----------------------------------------------------------*/
     int sd_manager::mount_sd()
     {
-        return mount(
-            device_file_.c_str(),
-            mount_point_.c_str(),
-            "vfat",
-            MS_NOATIME|MS_NOEXEC,
-            "errors=continue"
-        );
+    	std::string type = check_filesystem_type();
+    	int ret = -1;
+     	
+    	if( type == "" ){
+    		return -1;
+    	}
+    	
+    	
+    	if( type == "ntfs" )
+    	{
+    		std::string cmd = "ntfs-3g ";
+    		cmd += device_file_.c_str();
+    		cmd += " ";
+    		cmd += mount_point_.c_str();
+    		cmd += " -o rw";
+
+    		ret = std::system(cmd.c_str());
+  
+    	}
+    	else
+    	{
+         	ret = mount(device_file_.c_str(),
+				   		mount_point_.c_str(),
+				    	type.c_str(),
+				    	MS_NOATIME|MS_NOEXEC,
+				    	"errors=continue");        
+        }
+        
+        return ret;
     }
 
 
@@ -231,13 +254,35 @@ namespace nvr {
 ----------------------------------------------------------*/    
     int sd_manager::mount_sd_ro()
     {
-        return mount(
-            device_file_.c_str(),
-            mount_point_.c_str(),
-            "vfat",
-            MS_NOATIME|MS_NOEXEC|MS_RDONLY,
-            "errors=continue"
-        );
+    	std::string type = check_filesystem_type();
+    	int ret = -1;
+     	
+    	if( type == "" ){
+    		return -1;
+    	}
+    	
+    	
+    	if( type == "ntfs" )
+    	{
+    		std::string cmd = "ntfs-3g ";
+    		cmd += device_file_.c_str();
+    		cmd += " ";
+    		cmd += mount_point_.c_str();
+    		cmd += " -o r";
+
+    		ret = std::system(cmd.c_str());
+  
+    	}
+    	else
+    	{
+         	ret = mount(device_file_.c_str(),
+				   		mount_point_.c_str(),
+				    	type.c_str(),
+				    	MS_NOATIME|MS_NOEXEC|MS_RDONLY,
+				    	"errors=continue");        
+        }
+        
+        return ret;
     }
 
 
@@ -247,6 +292,30 @@ namespace nvr {
         return umount(mount_point_.c_str());
     }
 
+
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+	std::string sd_manager::check_filesystem_type()
+	{
+		const std::string device = "/dev/mmcblk1p1";  // 判定したいパス
+
+		std::string cmd = "blkid -s TYPE -o value " + device;
+		FILE* pipe = popen(cmd.c_str(), "r");
+		if (!pipe) return "";
+
+		char buffer[128];
+		std::string result;
+		if (fgets(buffer, sizeof(buffer), pipe)) 
+		{
+		    result = buffer;
+		    result.erase(result.find_last_not_of(" \n\r\t") + 1);  // trim
+		}
+		pclose(pipe);	
+		
+		SPDLOG_ERROR("check_filesystem_type = {}",result);
+			
+		return result;
+	}
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
