@@ -77,11 +77,14 @@ namespace nvr {
         uint64_t Usable_byte = 0;
         uint64_t file_count = 0;
         
-        
-
         tid << std::this_thread::get_id();
-
+        
         SPDLOG_DEBUG(">>> format_process {}", tid.str());
+
+		write_to_sysfs(UNBIND_PATH, DEVICE);
+		write_to_sysfs(BIND_PATH, DEVICE);	
+		sleep(1);
+
         if (!check_proc_mounts()) {
             rc = mount_sd();
             if (rc == 0 && is_root_file_exists() == 0 ) {
@@ -103,6 +106,18 @@ namespace nvr {
                 goto END;
             }
         }
+        else
+        {
+        	unmount_sd();
+			rc = create_partition();
+			if( rc != 0 )
+			{
+				SPDLOG_ERROR("create_partition FALUT result = {}",rc);
+				result = format_result_error;
+                goto END;
+			}        
+        }
+        
         
         
        	unsigned char sz_kb;
@@ -218,35 +233,13 @@ namespace nvr {
 ----------------------------------------------------------*/
     int sd_manager::mount_sd()
     {
-    	std::string type = check_filesystem_type();
-    	int ret = -1;
-     	
-    	if( type == "" ){
-    		return -1;
-    	}
-    	
-    	
-    	if( type == "ntfs" )
-    	{
-    		std::string cmd = "ntfs-3g ";
-    		cmd += device_file_.c_str();
-    		cmd += " ";
-    		cmd += mount_point_.c_str();
-    		cmd += " -o rw";
-
-    		ret = std::system(cmd.c_str());
-  
-    	}
-    	else
-    	{
-         	ret = mount(device_file_.c_str(),
-				   		mount_point_.c_str(),
-				    	type.c_str(),
-				    	MS_NOATIME|MS_NOEXEC,
-				    	"errors=continue");        
-        }
-        
-        return ret;
+        return mount(
+            device_file_.c_str(),
+            mount_point_.c_str(),
+            "vfat",
+            MS_NOATIME|MS_NOEXEC,
+            "errors=continue"
+        );       
     }
 
 
@@ -254,35 +247,13 @@ namespace nvr {
 ----------------------------------------------------------*/    
     int sd_manager::mount_sd_ro()
     {
-    	std::string type = check_filesystem_type();
-    	int ret = -1;
-     	
-    	if( type == "" ){
-    		return -1;
-    	}
-    	
-    	
-    	if( type == "ntfs" )
-    	{
-    		std::string cmd = "ntfs-3g ";
-    		cmd += device_file_.c_str();
-    		cmd += " ";
-    		cmd += mount_point_.c_str();
-    		cmd += " -o r";
-
-    		ret = std::system(cmd.c_str());
-  
-    	}
-    	else
-    	{
-         	ret = mount(device_file_.c_str(),
-				   		mount_point_.c_str(),
-				    	type.c_str(),
-				    	MS_NOATIME|MS_NOEXEC|MS_RDONLY,
-				    	"errors=continue");        
-        }
-        
-        return ret;
+        return mount(
+            device_file_.c_str(),
+            mount_point_.c_str(),
+            "vfat",
+            MS_NOATIME|MS_NOEXEC|MS_RDONLY,
+            "errors=continue"
+        ); 
     }
 
 
@@ -292,30 +263,6 @@ namespace nvr {
         return umount(mount_point_.c_str());
     }
 
-
-/*----------------------------------------------------------
-----------------------------------------------------------*/
-	std::string sd_manager::check_filesystem_type()
-	{
-		const std::string device = "/dev/mmcblk1p1";  // 判定したいパス
-
-		std::string cmd = "blkid -s TYPE -o value " + device;
-		FILE* pipe = popen(cmd.c_str(), "r");
-		if (!pipe) return "";
-
-		char buffer[128];
-		std::string result;
-		if (fgets(buffer, sizeof(buffer), pipe)) 
-		{
-		    result = buffer;
-		    result.erase(result.find_last_not_of(" \n\r\t") + 1);  // trim
-		}
-		pclose(pipe);	
-		
-		SPDLOG_ERROR("check_filesystem_type = {}",result);
-			
-		return result;
-	}
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
@@ -523,9 +470,7 @@ namespace nvr {
     {	
         //---SDカードが挿入されているか
         //
-        SPDLOG_INFO("is_sd_card w");
-        
-        
+                
         int res = 100;
         static int wait = 0;
         static int count_ro = 10;
@@ -562,15 +507,22 @@ namespace nvr {
         
         //--- Read only SD
         //
-        if( count_ro == 0 )
-		{
+        if( count_ro == 0 ){
 			return 1;
 		}
 
         //---SDカードがマウントされているか
         //
         if ( !check_proc_mounts() )
-        {    
+        {
+        	//---NO FAT32
+        	//
+        	if( check_filesystem_type() == -1 ){
+	        	SPDLOG_ERROR("file system type invalid");
+				return -3;        	
+        	}
+        	
+        	
             res = mount_sd();
 			SPDLOG_INFO("check_proc_mounts mount = {}",res);
 			if(res == -1 )
@@ -622,8 +574,8 @@ namespace nvr {
         return 0;
     }
 
-    /*----------------------------------------------------------
-    ----------------------------------------------------------*/
+/*----------------------------------------------------------
+----------------------------------------------------------*/
     int sd_manager::is_formatting()
     {
         int res;
@@ -643,8 +595,8 @@ namespace nvr {
         return res;
     }
 
-    /*----------------------------------------------------------
-    ----------------------------------------------------------*/
+/*----------------------------------------------------------
+----------------------------------------------------------*/
 
     int sd_manager::is_writprotect()
     {
@@ -672,8 +624,8 @@ namespace nvr {
     }
     
 
-    /*----------------------------------------------------------
-    ----------------------------------------------------------*/
+/*----------------------------------------------------------
+----------------------------------------------------------*/
     int sd_manager::is_root_file_exists() noexcept
     {
         std::error_code ec;
@@ -698,8 +650,8 @@ namespace nvr {
         return 0;
     }
     
-    /*------------------------------------------------------
-	------------------------------------------------------*/
+/*------------------------------------------------------
+------------------------------------------------------*/
 	bool sd_manager::check_update()
 	{
 		const char *bin_dir = "/mnt/sd"; 
@@ -744,8 +696,8 @@ namespace nvr {
 	}
 	
 	
-    /*------------------------------------------------------
-	------------------------------------------------------*/	
+/*------------------------------------------------------
+------------------------------------------------------*/	
 	bool sd_manager::try_read_device() 
 	{
 		const std::string device_path = "/dev/mmcblk1";
@@ -769,8 +721,8 @@ namespace nvr {
 	}
 
 
-    /*------------------------------------------------------
-	------------------------------------------------------*/
+/*------------------------------------------------------
+------------------------------------------------------*/
 	void sd_manager::trigger_rescan() 
 	{
 		std::ofstream rescan("/sys/class/mmc_host/mmc1/rescan");
@@ -782,8 +734,8 @@ namespace nvr {
 		}
 	}
 	
-	/*----------------------------------------------------------
-	----------------------------------------------------------*/
+/*----------------------------------------------------------
+----------------------------------------------------------*/
 	void sd_manager::write_to_sysfs(const char *path, const char *value) {
 		 FILE *fp = fopen(path, "w");
 		if (!fp) {
@@ -943,8 +895,8 @@ namespace nvr {
 	}
 	
 	
-	/*----------------------------------------------------------
-	----------------------------------------------------------*/
+/*----------------------------------------------------------
+----------------------------------------------------------*/
 	bool sd_manager::sd_card_has_files()
 	{
 		std::vector<std::string> file_list;
@@ -976,6 +928,41 @@ namespace nvr {
 		
 		SPDLOG_INFO("sd_card_has_files() false " );
 		return false;  // ファイルなし、またはエラー
+	}
+	
+/*----------------------------------------------------------
+----------------------------------------------------------*/
+	int sd_manager::check_filesystem_type()
+	{
+		const std::string device = "/dev/mmcblk1p1"; 
+
+		std::string cmd = "blkid -s TYPE -o value " + device;
+		FILE* pipe = popen(cmd.c_str(), "r");
+		if (!pipe){
+		 	return -2;
+		}
+
+		char buffer[128];
+		std::string result;
+		if (fgets(buffer, sizeof(buffer), pipe)) 
+		{
+		    result = buffer;
+		    result.erase(result.find_last_not_of(" \n\r\t") + 1);  // trim
+		}
+		pclose(pipe);
+		
+		if( result == "")
+		{
+			return -2;
+		}
+		else
+		if( result != "vfat" ){
+			return -1;
+		}
+		
+		SPDLOG_INFO("check_filesystem_type = {}",result);
+			
+		return 0;
 	}
 }
 

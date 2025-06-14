@@ -79,7 +79,7 @@ namespace nvr {
         bool try_read_device();
 		void trigger_rescan();
 		void write_to_sysfs(const char *filename, const char *value);
-		std::string check_filesystem_type();
+		int check_filesystem_type();
 		
         inline bool is_update_file_exists() noexcept
         {

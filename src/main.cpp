@@ -1113,17 +1113,13 @@ static gboolean on_timer( gpointer udata )
 	//------------------------------------------------
 	if( err_video == true )
 	{
-		SPDLOG_INFO("err_video = true");
 		if( is_video() == true )
 		{	
-			SPDLOG_INFO("is_video()  = true");
 			count_video_found++;
 		}
 		
-		SPDLOG_INFO("count_video_found = {}",count_video_found);
 		if( count_video_found > 30 )
 		{
-			SPDLOG_INFO("err_video = false;");
 			err_video = false;
 			count_video_lost = 0;
 			count_video_found = 0;
@@ -1133,10 +1129,9 @@ static gboolean on_timer( gpointer udata )
 	if( is_video() == false )
 	{
 		count_video_lost++;
-		SPDLOG_INFO("is_video() == false lodt = {}",count_video_lost);
 		if( count_video_lost > 600 )
 		{
-			SPDLOG_INFO("err_video = true;");
+			SPDLOG_ERROR("err_video = true;");
 			err_video = true;
 			count_video_found = 0;
 			count_video_lost = 0;
@@ -1173,7 +1168,6 @@ static gboolean on_timer( gpointer udata )
 	if( formatting == true )
 	{
 		int res = data->sd_manager->is_formatting();
-//		SPDLOG_INFO("formatting res = {}",res);
 		if (res == 0) 	//---フォーマット中
 		{
 			data->led->set_g( data->led->two );
@@ -1228,14 +1222,14 @@ static gboolean on_timer( gpointer udata )
 		count_copy_interval = 0;
 		
 		is_sd_check = true;
-		//is_sd_check = false;
-
 		
 		//--- SDカードチェック
 		//
 		res = data->sd_manager->is_sd_card();
 		if( res == 0 )
 		{
+			err_sd_none = false;
+			
 			//---SDカード　空
 			//
 			if( data->sd_manager->sd_card_has_files() == false )
@@ -1274,22 +1268,12 @@ static gboolean on_timer( gpointer udata )
 		else
 		if( res == -3 ) //format
 		{
-			SPDLOG_INFO("create_partition");
-			int result = data->sd_manager->create_partition();
-			if( result != 0 )
+			res = data->sd_manager->start_format();
+			if( res == 0 )
 			{
-				SPDLOG_ERROR("create_partition FALUT ");
-			}
-			else
-			{
-				res = data->sd_manager->start_format();
-				SPDLOG_INFO("start_format {}",res);
-				if( res == 0 )
-				{
-					formatting = true;
-				}			
+				formatting = true;
+				err_sd_none = false;
 			}			
-
 		}
 	}
 	//
@@ -1312,6 +1296,8 @@ static gboolean on_timer( gpointer udata )
 		res = data->sd_manager->is_sd_card();
 		if( res == 0 )
 		{
+			err_sd_none = false;
+			
 			//---SDカード　空
 			//
 			if( data->sd_manager->sd_card_has_files() == false )
@@ -1350,23 +1336,12 @@ static gboolean on_timer( gpointer udata )
 		else
 		if( res == -3 ) //format
 		{
-			SPDLOG_INFO("create_partition");
-			int result = data->sd_manager->create_partition();
-			if( result != 0 )
+			res = data->sd_manager->start_format();
+			if( res == 0 )
 			{
-				SPDLOG_ERROR("create_partition FALUT ");
-			}
-			else
-			{
-				SPDLOG_INFO("create_partition OK");
-				res = data->sd_manager->start_format();
-				SPDLOG_INFO("timer start_format nuke");
-				SPDLOG_INFO("start_format {}",res);
-				if( res == 0 )
-				{
-					formatting = true;
-				}			
-			}			
+				formatting = true;
+				err_sd_none = false;
+			}					
 		}
 	}
 	//
@@ -1380,6 +1355,8 @@ static gboolean on_timer( gpointer udata )
 		res = data->sd_manager->is_sd_card();
 		if( res == 0 )
 		{
+			
+			err_sd_none = false;
 			//---SDカード　空
 			//
 			if( data->sd_manager->sd_card_has_files() == false )
@@ -1413,7 +1390,7 @@ static gboolean on_timer( gpointer udata )
 					count_sd_access_err = 600;
 					recwachtime = 1200;
 					is_sd_check = false;
-					err_sd_none = false;
+					
 			
 				}
 				else
@@ -1427,7 +1404,6 @@ static gboolean on_timer( gpointer udata )
 					{
 						formatting = true;
 						is_sd_check = false;
-						err_sd_none = false;
 					}			
 				}
 				else
@@ -1468,22 +1444,11 @@ static gboolean on_timer( gpointer udata )
 		else
 		if( res == -3 ) //format
 		{
-			SPDLOG_INFO("create_partition");
-			int result = data->sd_manager->create_partition();
-			if( result != 0 )
+			res = data->sd_manager->start_format();
+			if( res == 0 )
 			{
-				SPDLOG_ERROR("create_partition FALUT result = {}",result);
-			}
-			else
-			{
-				SPDLOG_INFO("create_partition OK");
-				res = data->sd_manager->start_format();
-				SPDLOG_INFO("timer start_format nuke");
-				SPDLOG_INFO("start_format {}",res);
-				if( res == 0 )
-				{
-					formatting = true;
-				}			
+				formatting = true;
+				err_sd_none = false;
 			}			
 		}
 		else
