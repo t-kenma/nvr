@@ -31,7 +31,7 @@
 
 
 
-#define STR_VER		"0.3"
+#define STR_VER		"0.4"
 
 
 
