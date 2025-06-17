@@ -70,7 +70,7 @@ bool check_proc_mounts();
 bool is_sd_card();
 bool get_update_file( char* name );
 bool execute();
-bool update();
+void update_proc();
 bool check_video();
 int _do_reboot() noexcept;
 bool check_power(callback_data_t *data);
@@ -78,6 +78,8 @@ bool check_cminsig(callback_data_t *data);
 
 int g_counter_ = 0;
 bool is_child = false;
+
+int update_state = 0;
 
 /***********************************************************
 ***********************************************************/
@@ -91,8 +93,40 @@ static gboolean timer1_cb(gpointer udata)
 	//
 	
 	check_power(data);
+	update_proc();
+	
+	if( update_state > 2 && update_state < 6 )
+	{
+		if( g_counter_ >= 0 && g_counter_ < 1)
+        {
+            data->_grn->write_value(true);
+            data->_red->write_value(true);
+            data->_yel->write_value(true);        	
+        }
+        else
+        if( g_counter_ >= 1 && g_counter_ < 2 )
+        {
+        	data->_grn->write_value(false);
+            data->_red->write_value(false);
+            data->_yel->write_value(false);
+        }
 
-	if( data->update_ok )
+        g_counter_++;
+        if( g_counter_ > 1)
+        {
+            g_counter_ = 0;
+        }        
+	}
+	else
+	if( update_state >= 6 )
+	{
+		data->_grn->write_value(false);
+        data->_red->write_value(false);
+        data->_yel->write_value(false);        	
+	}
+	
+	
+	if( update_state == 6 )
 	{
 		if(!is_sd_card())
 		{
@@ -100,34 +134,14 @@ static gboolean timer1_cb(gpointer udata)
 			data->_grn->write_value(true);
             data->_red->write_value(true);
             data->_yel->write_value(true);
-            data->b_reboot = true;
-			g_main_loop_quit(data->main_loop);
+            update_state = 0;
+//          data->b_reboot = true;
+//			g_main_loop_quit(data->main_loop);
 			return G_SOURCE_CONTINUE;
 		}
-		
-	    if( g_counter_ >= 0 && g_counter_ < 6)
-        {
-            data->_grn->write_value(true);
-            data->_red->write_value(true);
-            data->_yel->write_value(true);
-        }
-        else
-        if( g_counter_ >= 6 && g_counter_ < 10 )
-        {
-            data->_grn->write_value(false);
-            data->_red->write_value(false);
-            data->_yel->write_value(false);
-        }
-
-        g_counter_++;
-        if( g_counter_ >= 10)
-        {
-            g_counter_ = 6;
-        }        
-		
-		return G_SOURCE_CONTINUE;
 	}
 	else
+	if( update_state == 0 )
 	{
 		int status;
 		pid_t result = waitpid(child, &status, WNOHANG);
@@ -144,15 +158,6 @@ static gboolean timer1_cb(gpointer udata)
 			execute();
 		}
 	}
-		
-	if( update() == true )
-	{
-		//---SD抜き待ち
-		//
-		data->update_ok = true;
-	}
-	
-	
 
 	
 	return G_SOURCE_CONTINUE;
@@ -438,68 +443,127 @@ bool execute()
 
 /*----------------------------------------------------------
 ----------------------------------------------------------*/
-bool update()
-{	
-	//---SDカードの挿入確認
-	//
-	if( is_sd_card() == false ){
-		//SPDLOG_INFO("is_sd_card() false");
-		return false;
-	}
+void update_proc()
+{
+	std::error_code ec;
+	static char update_name[256]  = {0};
+	static int time_out = 100;
+	pid_t result = -1;
+	int status;
 	
-	
-	//アップデータファイルの存在確認
-	//
-	char update_name[256]  = {0};
-	if( get_update_file( update_name ) == false ){
-		//SPDLOG_INFO("get_update_file() false");
-		return false;
-	}
-	
-	//--- プロセスを停止
-	//
-	SPDLOG_INFO(" child = {}",child);
-	if( child > 0 )
+	switch (update_state ) 
 	{
-		int status;
-		SPDLOG_INFO("PROCESS KILL...");
-		kill(child, SIGTERM);
-		waitpid(child, &status, 0);
-		SPDLOG_INFO("PROCESS KILLED!!");
-		child = -1;
+  		case 0 :
+			//---SDカードの挿入確認
+			//
+			if( is_sd_card() == true ){
+				update_state++;
+			}
+			
+			break;
+			
+		case 1 :
+			//アップデータファイルの存在確認
+			//
+			update_name[256]  = {0};
+			if( get_update_file( update_name ) == true )
+			{
+				update_state++;
+			}
+			else
+			{
+				update_state = 0;
+			}
+			
+			break;
+
+	
+		case 2 :
+			//--- プロセスを停止
+			//
+			time_out = 100;
+			SPDLOG_INFO(" child = {}",child);
+			if( child > 0 )
+			{
+				int status;
+				SPDLOG_INFO("PROCESS KILL...");
+				kill(child, SIGTERM);
+				update_state++;
+			}
+			else
+			{
+				update_state = 0;
+			}
+			
+			break;	
+			
+		case 3 :
+			result = waitpid(child, &status, WNOHANG);
+			
+			if( result != 0 )
+			{
+				SPDLOG_INFO("PROCESS KILLED!!");
+				child = -1;
+				update_state++;
+			}
+			else
+			{
+				time_out--;
+				if( time_out == 0 )
+				{
+					SPDLOG_INFO("PROCESS KILL TimeOut");
+					update_state = 0;
+				}
+			}
+			
+			break;	
+			
+		case 4 :
+	
+			//--- 実行ファイルを削除
+			//
+			//	SPDLOG_INFO("実行ファイルを削除");
+			try
+			{
+				fs::path del_path = fs::path(EXECUTE);
+				if ( fs::exists(del_path, ec) ) 
+				{				
+					fs::remove( del_path );
+					system("sync");
+					//SPDLOG_INFO("del execute = {}",del_path.string());
+				}
+				update_state++;
+			}
+			catch (const fs::filesystem_error& e)
+			{
+				std::cerr << "実行ファイル削除失敗: " << e.what() << '\n';
+				update_state = 0;
+			}
+			
+			break;	
+
+		case 5 :
+			//--- アップデートファイルをコピー
+			//
+			if(uncompress_encrypted( (const char*)update_name ) != 0)
+			{
+				SPDLOG_ERROR("uncompress_encrypted failure");
+				update_state = 0;
+			}
+			else
+			{
+				update_state++;
+			}
+	
+			break;
+			
+		case 6 :
+			break;
+			
+		default:
+		    break;
 	}
-	
-	
-	
-	//--- 実行ファイルを削除
-	//
-//	SPDLOG_INFO("実行ファイルを削除");
-	try
-	{
-		fs::path del_path = fs::path(EXECUTE);
-		fs::remove( del_path );
-		system("sync");
-		//SPDLOG_INFO("del execute = {}",del_path.string());
-	}
-	catch (const fs::filesystem_error& e)
-	{
-		std::cerr << "実行ファイル削除失敗: " << e.what() << '\n';
-		return false;
-	}
-	
-	
-	//--- アップデートファイルをコピー
-	//
-	if(uncompress_encrypted( (const char*)update_name ) != 0)
-	{
-		SPDLOG_ERROR("uncompress_encrypted failure");
-		return false;
-	}
-	
-	
-	
-	SPDLOG_INFO("update() true");
-	return true;
+		
 }
 
 /***********************************************************
@@ -807,7 +871,7 @@ int main(int argc, char **argv)
 	//--- timer start
 	//
 	timer1_id = g_timeout_add_full(G_PRIORITY_HIGH,				// 優先度
-									500,						// タイマー周期 1000msec
+									100,						// タイマー周期 100msec
 									G_SOURCE_FUNC(timer1_cb),	//
 									 &data,						// 
 									nullptr);					// 
@@ -825,18 +889,6 @@ int main(int argc, char **argv)
 	
 	mount_sd();
 
-	if( update() == true )
-	{
-		//---SD抜き待ち
-		//
-		data.update_ok = true;
-	}
-	else
-	{
-		data.update_ok = false;
-		execute();
-	}
-	
 	
 	//---メインループ 作成実行
 	//

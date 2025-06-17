@@ -149,6 +149,14 @@ namespace nvr
             r_counter_ = 0;
         }
         else
+        if(g_type_ == on)
+        {
+            //---点灯
+            //
+            set_red(false);
+            g_counter_ = 0;
+        }
+        else
         if(r_type_ == blink)
         {
             //---点滅

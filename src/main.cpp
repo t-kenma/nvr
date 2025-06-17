@@ -229,10 +229,6 @@ static gboolean signal_user1_cb(gpointer udata)
 	
 	/* remove signal handler */
 	data->signal_user1_id = 0;
-	guint signal_int_id;
-	guint signal_term_id;
-	guint signal_user1_id;
-	guint signal_user2_id;
 	return G_SOURCE_REMOVE;
 }
 
@@ -257,6 +253,11 @@ static gboolean signal_intr_cb(gpointer udata)
 	
 	callback_data_t* data = static_cast<callback_data_t*>(udata);
 	
+	data->led->set_r( data->led->off );
+	data->led->set_g( data->led->off );
+	data->led->set_y( data->led->off );
+	data->led->update_led();
+	
 	on_interrupted(data);
 	
 	/* remove signal handler */
@@ -272,6 +273,11 @@ static gboolean signal_term_cb(gpointer udata)
 	SPDLOG_INFO("SIGTERM receiverd.");
 	
 	callback_data_t* data = static_cast<callback_data_t*>(udata);
+	
+	data->led->set_r( data->led->off );
+	data->led->set_g( data->led->off );
+	data->led->set_y( data->led->off );
+	data->led->update_led();
 	
 	on_interrupted(data);
 	
@@ -1059,10 +1065,12 @@ static gboolean on_timer( gpointer udata )
 	unsigned char rtc_h = _tm->tm_hour;
 	unsigned char rtc_m = _tm->tm_min;
 	unsigned char rtc_s = _tm->tm_sec;
-		
+	
+	
 	if( reboot )
 	{
 		on_interrupted(data);
+		data->timer1_id = 0;
 		return G_SOURCE_REMOVE;
 	}
 	
@@ -1155,9 +1163,8 @@ static gboolean on_timer( gpointer udata )
 	//
 	//--- 重大エラー発生中
 	//
-	if( err_no_rec    ||
-		err_sd_access ||
-		err_system    )
+	if( ( err_no_rec || err_sd_access || err_system ) && 
+			is_usb_connenct() == false    )
 	{
 		data->led->set_g( data->led->off );
 	}
@@ -2388,14 +2395,24 @@ int main(int argc, char **argv)
 END:
 	//---終了処理
 	//
+	/*
 	led->set_r( led->off );
 	led->set_g( led->off );
 	led->set_y( led->off );
 	led->update_led();
+	*/
 	
 	SPDLOG_INFO("ENDprocess start");
 	data.interrupted.store(true, std::memory_order_relaxed);
 	usb_end();
+	
+	SPDLOG_INFO("signal_int_id = {}",data.signal_int_id);
+	SPDLOG_INFO("signal_term_id = {}",data.signal_term_id);
+	SPDLOG_INFO("signal_user1_id = {}",data.signal_user1_id);
+	SPDLOG_INFO("signal_user2_id = {}",data.signal_user2_id);
+	SPDLOG_INFO("bus_watch_id = {}",data.bus_watch_id);
+	SPDLOG_INFO("timer1_id = {}",data.timer1_id);
+	
 	
 	if (data.signal_int_id)
     {
