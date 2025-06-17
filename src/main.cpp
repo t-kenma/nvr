@@ -2395,12 +2395,10 @@ int main(int argc, char **argv)
 END:
 	//---終了処理
 	//
-	/*
 	led->set_r( led->off );
 	led->set_g( led->off );
 	led->set_y( led->off );
 	led->update_led();
-	*/
 	
 	SPDLOG_INFO("ENDprocess start");
 	data.interrupted.store(true, std::memory_order_relaxed);
