@@ -1263,11 +1263,11 @@ static gboolean on_timer( gpointer udata )
 					}			
 				}
 				else
-				if( res == -2 )
+				if( res == -2 && !err_sd_access)
 				{
 					//---SDアクセス異常 ログ
 					//
-					data->logger->LogOut( 9);
+					data->logger->LogOut(9);
 					err_sd_access = true;
 				}
 			}
@@ -1331,11 +1331,11 @@ static gboolean on_timer( gpointer udata )
 					}			
 				}
 				else
-				if( res == -2 )
+				if( res == -2 && !err_sd_access)
 				{
 					//---SDアクセス異常 ログ
 					//
-					data->logger->LogOut( 9);
+					data->logger->LogOut(9);
 					err_sd_access = true;
 				}
 			}
@@ -1414,13 +1414,14 @@ static gboolean on_timer( gpointer udata )
 					}			
 				}
 				else
-				if( res == -2 )
+				if( res == -2 && !err_sd_access)
 				{
 					//---SDアクセス異常 ログ
 					//
-					data->logger->LogOut( 9);
+					data->logger->LogOut(9);
 					err_sd_access = true;
 				}
+
 			}
 		}
 		else
@@ -1528,7 +1529,7 @@ static gboolean on_timer( gpointer udata )
 			if( !copy_jpeg( data ) )
 			{
 				SPDLOG_INFO("JPEG SAVE FALUT = {}",count_sd_access_err);
-				if( count_sd_access_err == 0 )
+				if( count_sd_access_err == 0 && !err_sd_access )
 				{
 					//---SDアクセス異常 ログ
 					//
